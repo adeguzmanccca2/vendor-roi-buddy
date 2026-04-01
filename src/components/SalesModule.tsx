@@ -5,35 +5,17 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Upload, Plus } from 'lucide-react';
-import { Sale } from '@/types/models';
+import { Plus } from 'lucide-react';
+import CsvUploadModule from '@/components/CsvUploadModule';
 
 export default function SalesModule() {
-  const { sales, addSale, addSales } = useApp();
+  const { sales, addSale } = useApp();
   const [form, setForm] = useState({ name: '', email: '', phone: '', revenue: 0, close_date: new Date().toISOString().split('T')[0] });
-  const fileRef = useRef<HTMLInputElement>(null);
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     addSale({ ...form, close_date: new Date(form.close_date).toISOString() });
     setForm({ name: '', email: '', phone: '', revenue: 0, close_date: new Date().toISOString().split('T')[0] });
-  };
-
-  const handleCSV = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      const lines = text.split('\n').slice(1).filter(l => l.trim());
-      const parsed: Omit<Sale, 'id'>[] = lines.map(line => {
-        const [name, email, phone, revenue, close_date] = line.split(',').map(s => s.trim().replace(/^"|"$/g, ''));
-        return { name: name || '', email: email || '', phone: phone || '', revenue: Number(revenue) || 0, close_date: close_date ? new Date(close_date).toISOString() : new Date().toISOString() };
-      });
-      addSales(parsed);
-    };
-    reader.readAsText(file);
-    if (fileRef.current) fileRef.current.value = '';
   };
 
   return (
@@ -55,13 +37,7 @@ export default function SalesModule() {
           </CardContent>
         </Card>
 
-        <Card>
-          <CardHeader><CardTitle><Upload className="mr-2 inline h-4 w-4" />CSV Upload</CardTitle></CardHeader>
-          <CardContent className="space-y-4">
-            <p className="text-sm text-muted-foreground">Upload a CSV with columns: name, email, phone, revenue, close_date</p>
-            <Input ref={fileRef} type="file" accept=".csv" onChange={handleCSV} />
-          </CardContent>
-        </Card>
+        <CsvUploadModule />
       </div>
 
       <Card>
