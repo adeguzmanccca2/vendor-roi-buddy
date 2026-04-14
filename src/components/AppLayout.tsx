@@ -1,11 +1,11 @@
 import { NavLink, useLocation } from 'react-router-dom';
-import { LayoutDashboard, Building2, Phone, ShoppingCart, Link2, Car } from 'lucide-react';
+import { LayoutDashboard, Building2, ShoppingCart, Link2, Car } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const links = [
   { to: '/', label: 'Dashboard', icon: LayoutDashboard },
   { to: '/vendors', label: 'Vendors', icon: Building2 },
-  { to: '/leads', label: 'Leads', icon: Phone },
+  
   { to: '/sales', label: 'Sales', icon: ShoppingCart },
   { to: '/matching', label: 'Matching', icon: Link2 },
   { to: '/vendor-leads', label: 'Vendor Leads', icon: Car },

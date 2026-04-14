@@ -9,7 +9,7 @@ import AppLayout from "@/components/AppLayout";
 import LoginPage from "@/components/LoginPage";
 import Index from "./pages/Index";
 import VendorsPage from "./pages/Vendors";
-import LeadsPage from "./pages/Leads";
+
 import SalesPage from "./pages/Sales";
 import MatchingPage from "./pages/Matching";
 import VendorLeadsPage from "./pages/VendorLeads";
@@ -33,7 +33,7 @@ const App = () => {
               <Routes>
                 <Route path="/" element={<Index />} />
                 <Route path="/vendors" element={<VendorsPage />} />
-                <Route path="/leads" element={<LeadsPage />} />
+                
                 <Route path="/sales" element={<SalesPage />} />
                 <Route path="/matching" element={<MatchingPage />} />
                 <Route path="/vendor-leads" element={<VendorLeadsPage />} />
