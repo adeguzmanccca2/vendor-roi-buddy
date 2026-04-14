@@ -56,3 +56,21 @@ export interface VendorMetrics {
   close_rate: number;
   decision: 'CUT' | 'OPTIMIZE' | 'SCALE';
 }
+
+export interface VendorLead {
+  id: string;
+  vendor_id: string;
+  vin: string;
+  year: string;
+  make: string;
+  model: string;
+  trim: string;
+  body_style: string;
+  dol: number;
+  last_price: number;
+  lotlinx_vdp: number;
+  total_vdp: number;
+  net_new_shoppers: number;
+  pct_sales_opportunities: number;
+  uploaded_at: string;
+}
