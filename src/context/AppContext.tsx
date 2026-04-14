@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
-import { Vendor, Call, EmailLead, Sale, MatchedRecord, VendorMetrics } from '@/types/models';
+import { Vendor, Call, EmailLead, Sale, MatchedRecord, VendorMetrics, VendorLead } from '@/types/models';
 import { seedVendors, seedCalls, seedEmailLeads, seedSales } from '@/data/seed';
 
 interface AppState {
@@ -7,6 +7,7 @@ interface AppState {
   calls: Call[];
   emailLeads: EmailLead[];
   sales: Sale[];
+  vendorLeads: VendorLead[];
 }
 
 interface AppContextType extends AppState {
@@ -17,6 +18,7 @@ interface AppContextType extends AppState {
   addEmailLead: (e: Omit<EmailLead, 'id'>) => void;
   addSale: (s: Omit<Sale, 'id'>) => void;
   addSales: (s: Omit<Sale, 'id'>[]) => void;
+  addVendorLeads: (leads: Omit<VendorLead, 'id'>[]) => void;
   getMatches: () => MatchedRecord[];
   getMetrics: () => VendorMetrics[];
 }
@@ -30,7 +32,7 @@ function loadState(): AppState {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (saved) return JSON.parse(saved);
   } catch {}
-  return { vendors: seedVendors, calls: seedCalls, emailLeads: seedEmailLeads, sales: seedSales };
+  return { vendors: seedVendors, calls: seedCalls, emailLeads: seedEmailLeads, sales: seedSales, vendorLeads: [] };
 }
 
 function saveState(state: AppState) {
@@ -62,6 +64,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addEmailLead = (e: Omit<EmailLead, 'id'>) => update(s => ({ ...s, emailLeads: [...s.emailLeads, { ...e, id: genId() }] }));
   const addSale = (s: Omit<Sale, 'id'>) => update(st => ({ ...st, sales: [...st.sales, { ...s, id: genId() }] }));
   const addSales = (sales: Omit<Sale, 'id'>[]) => update(st => ({ ...st, sales: [...st.sales, ...sales.map(s => ({ ...s, id: genId() }))] }));
+  const addVendorLeads = (leads: Omit<VendorLead, 'id'>[]) => update(st => ({ ...st, vendorLeads: [...st.vendorLeads, ...leads.map(l => ({ ...l, id: genId() }))] }));
 
   const getMatches = useCallback((): MatchedRecord[] => {
     const matches: MatchedRecord[] = [];
@@ -136,7 +139,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.vendors, state.calls, state.emailLeads, state.sales, getMatches]);
 
   return (
-    <AppContext.Provider value={{ ...state, addVendor, updateVendor, deleteVendor, addCall, addEmailLead, addSale, addSales, getMatches, getMetrics }}>
+    <AppContext.Provider value={{ ...state, addVendor, updateVendor, deleteVendor, addCall, addEmailLead, addSale, addSales, addVendorLeads, getMatches, getMetrics }}>
       {children}
     </AppContext.Provider>
   );
