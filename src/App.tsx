@@ -12,6 +12,7 @@ import VendorsPage from "./pages/Vendors";
 import LeadsPage from "./pages/Leads";
 import SalesPage from "./pages/Sales";
 import MatchingPage from "./pages/Matching";
+import VendorLeadsPage from "./pages/VendorLeads";
 import NotFound from "./pages/NotFound";
 
 const queryClient = new QueryClient();
@@ -35,6 +36,7 @@ const App = () => {
                 <Route path="/leads" element={<LeadsPage />} />
                 <Route path="/sales" element={<SalesPage />} />
                 <Route path="/matching" element={<MatchingPage />} />
+                <Route path="/vendor-leads" element={<VendorLeadsPage />} />
                 <Route path="*" element={<NotFound />} />
               </Routes>
             </AppLayout>
