@@ -296,11 +296,11 @@ export default function VendorLeadUpload() {
           {step === 'result' && result && (
             <div className="space-y-4">
               <div className="flex items-start gap-3 rounded-lg border border-border p-4">
-                <CheckCircle2 className="mt-0.5 h-6 w-6 text-green-500" />
+                <CheckCircle2 className="mt-0.5 h-6 w-6 text-primary" />
                 <div>
                   <h3 className="font-semibold text-foreground">Import Complete</h3>
                   <p className="text-sm text-muted-foreground mt-1">
-                    <span className="text-green-600 font-medium">{result.imported} rows imported</span>
+                    <span className="text-primary font-medium">{result.imported} rows imported</span>
                     {result.skipped > 0 && <span className="text-destructive ml-2">· {result.skipped} skipped</span>}
                   </p>
                 </div>
