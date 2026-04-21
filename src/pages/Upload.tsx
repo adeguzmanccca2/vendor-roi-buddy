@@ -30,9 +30,21 @@ const FIELDS = [
   { key: 'full_name', label: 'Full name', candidates: ['full name', 'name', 'customer name', 'lead name'] },
   { key: 'email', label: 'Email', candidates: ['email', 'e-mail', 'customer email'] },
   { key: 'phone', label: 'Phone', candidates: ['phone', 'mobile', 'cell', 'tel', 'phone number'] },
-  { key: 'vehicle', label: 'Vehicle of interest', candidates: ['vehicle', 'voi', 'vehicle of interest', 'desired vehicle', 'model'] },
+  { key: 'vehicle', label: 'Vehicle of interest', candidates: ['vehicle', 'voi', 'vehicle of interest', 'desired vehicle'] },
   { key: 'lead_date', label: 'Lead date', candidates: ['lead date', 'date', 'created', 'submitted', 'timestamp'] },
   { key: 'source', label: 'Source label', candidates: ['source', 'lead source', 'origin'] },
+  { key: 'vin', label: 'VIN', candidates: ['vin', 'vehicle vin', 'vin number'] },
+  { key: 'year', label: 'Year', candidates: ['year', 'model year', 'vehicle year'] },
+  { key: 'make', label: 'Make', candidates: ['make', 'vehicle make'] },
+  { key: 'model', label: 'Model', candidates: ['model', 'vehicle model'] },
+  { key: 'trim', label: 'Trim', candidates: ['trim', 'vehicle trim'] },
+  { key: 'body_style', label: 'Body style', candidates: ['body style', 'body', 'bodystyle', 'body type'] },
+  { key: 'dol', label: 'DOL (Days on lot)', candidates: ['dol', 'days on lot', 'age', 'days in stock'] },
+  { key: 'last_price', label: 'Last price', candidates: ['last price', 'price', 'list price', 'asking price'] },
+  { key: 'lotlinx_vdp', label: 'Lotlinx VDP', candidates: ['lotlinx vdp', 'lotlinx', 'll vdp'] },
+  { key: 'total_vdp', label: 'Total VDP', candidates: ['total vdp', 'vdp', 'vdp total', 'vdps'] },
+  { key: 'net_new_shoppers', label: 'Net new shoppers', candidates: ['net new shoppers', 'new shoppers', 'nns'] },
+  { key: 'pct_sales_opps', label: '% Sales opps since campaign', candidates: ['percentage sales opportunities', 'sales opportunities', '% sales opps', 'pct sales opps', 'sales opps since campaign'] },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
