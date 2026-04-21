@@ -1,12 +1,15 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Building2, Users, LogOut, Shield } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, Upload } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
+import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { cn } from '@/lib/utils';
 
 export default function AppLayout({ children }: { children: ReactNode }) {
   const { isAdmin, profile, signOut } = useAuth();
+  const { orgs, activeOrgId, setActiveOrgId, activeOrg } = useActiveOrg();
   const navigate = useNavigate();
   const location = useLocation();
 
@@ -14,10 +17,16 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true },
     { to: '/admin/dealerships', label: 'Dealerships', icon: Building2 },
     { to: '/admin/users', label: 'Users', icon: Users },
+    { to: '/vendors', label: 'Vendors', icon: Store },
+    { to: '/leads', label: 'Leads', icon: ListChecks },
+    { to: '/upload', label: 'Upload CSV', icon: Upload },
   ];
 
   const clientLinks = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
+    { to: '/vendors', label: 'Vendors', icon: Store },
+    { to: '/leads', label: 'Leads', icon: ListChecks },
+    { to: '/upload', label: 'Upload CSV', icon: Upload },
   ];
 
   const links = isAdmin ? adminLinks : clientLinks;
@@ -39,6 +48,25 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             {isAdmin ? 'Admin Portal' : 'Dealership Portal'}
           </p>
         </div>
+
+        {isAdmin && orgs.length > 0 && (
+          <div className="border-b border-border p-3">
+            <p className="mb-1 px-1 text-xs font-medium text-muted-foreground">Active dealership</p>
+            <Select value={activeOrgId ?? ''} onValueChange={v => setActiveOrgId(v)}>
+              <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Choose..." /></SelectTrigger>
+              <SelectContent>
+                {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
+
+        {!isAdmin && activeOrg && (
+          <div className="border-b border-border p-3">
+            <p className="px-1 text-xs text-muted-foreground">Dealership</p>
+            <p className="px-1 text-sm font-medium text-foreground">{activeOrg.name}</p>
+          </div>
+        )}
 
         <nav className="flex-1 space-y-1 p-3">
           {links.map(link => {
@@ -78,17 +106,25 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
       {/* Mobile top bar */}
       <div className="fixed left-0 right-0 top-0 z-50 flex items-center justify-between border-b border-border bg-card px-4 py-3 lg:hidden">
-        <div>
+        <div className="min-w-0 flex-1">
           <h2 className="text-sm font-bold text-foreground">Vendor ROI</h2>
-          <p className="text-xs text-muted-foreground">{isAdmin ? 'Admin' : 'Dealership'}</p>
+          <p className="truncate text-xs text-muted-foreground">{activeOrg?.name ?? (isAdmin ? 'Admin' : 'Dealership')}</p>
         </div>
+        {isAdmin && orgs.length > 0 && (
+          <Select value={activeOrgId ?? ''} onValueChange={v => setActiveOrgId(v)}>
+            <SelectTrigger className="h-8 w-32 text-xs"><SelectValue placeholder="Org" /></SelectTrigger>
+            <SelectContent>
+              {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+            </SelectContent>
+          </Select>
+        )}
         <Button variant="outline" size="sm" onClick={handleSignOut}>
           <LogOut className="h-4 w-4" />
         </Button>
       </div>
 
       {/* Mobile bottom nav */}
-      <div className="fixed bottom-0 left-0 right-0 z-50 flex border-t border-border bg-card lg:hidden">
+      <div className="fixed bottom-0 left-0 right-0 z-50 flex overflow-x-auto border-t border-border bg-card lg:hidden">
         {links.map(link => {
           const active = link.end
             ? location.pathname === link.to
@@ -99,11 +135,11 @@ export default function AppLayout({ children }: { children: ReactNode }) {
               to={link.to}
               end={link.end}
               className={cn(
-                'flex flex-1 flex-col items-center gap-1 py-2 text-xs',
+                'flex flex-1 min-w-[70px] flex-col items-center gap-1 py-2 text-[10px]',
                 active ? 'text-primary' : 'text-muted-foreground',
               )}
             >
-              <link.icon className="h-5 w-5" />
+              <link.icon className="h-4 w-4" />
               {link.label}
             </NavLink>
           );
