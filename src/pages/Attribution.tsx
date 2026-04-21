@@ -4,7 +4,7 @@ import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
 } from 'lucide-react';
@@ -59,16 +59,27 @@ const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-type Period = 'mtd' | '30' | '90' | '12m' | 'all';
+type Period = 'mtd' | '30' | '90' | '12m' | 'all' | `m:${string}`;
 
-function periodStart(p: Period): string | null {
-  const now = new Date();
-  if (p === 'mtd') return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  if (p === '30') return new Date(Date.now() - 30 * 86400000).toISOString();
-  if (p === '90') return new Date(Date.now() - 90 * 86400000).toISOString();
-  if (p === '12m') return new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
-  return null;
+function isMonthPeriod(p: Period): p is `m:${string}` {
+  return typeof p === 'string' && p.startsWith('m:');
 }
+
+function periodRange(p: Period): { start: string | null; end: string | null } {
+  const now = new Date();
+  if (p === 'mtd') return { start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), end: null };
+  if (p === '30') return { start: new Date(Date.now() - 30 * 86400000).toISOString(), end: null };
+  if (p === '90') return { start: new Date(Date.now() - 90 * 86400000).toISOString(), end: null };
+  if (p === '12m') return { start: new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString(), end: null };
+  if (isMonthPeriod(p)) {
+    const [y, m] = p.slice(2).split('-').map(Number);
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 1); // first day of next month, exclusive
+    return { start: start.toISOString(), end: end.toISOString() };
+  }
+  return { start: null, end: null };
+}
+
 function periodMonths(p: Period): number {
   if (p === 'mtd') {
     const now = new Date();
@@ -77,7 +88,20 @@ function periodMonths(p: Period): number {
   if (p === '30') return 1;
   if (p === '90') return 3;
   if (p === '12m') return 12;
+  if (isMonthPeriod(p)) return 1;
   return 12;
+}
+
+function monthOptions(count = 24): { value: `m:${string}`; label: string }[] {
+  const now = new Date();
+  const out: { value: `m:${string}`; label: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` as const;
+    const label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    out.push({ value, label });
+  }
+  return out;
 }
 
 const CAT_COLOR: Record<VendorPerf['category'], string> = {
@@ -103,7 +127,7 @@ export default function AttributionPage() {
   const load = async () => {
     if (!activeOrgId) return;
     setLoading(true);
-    const sinceIso = periodStart(period);
+    const { start: sinceIso, end: untilIso } = periodRange(period);
     const trendSinceIso = new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString();
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
@@ -114,6 +138,7 @@ export default function AttributionPage() {
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
     if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
+    if (untilIso) sQ = sQ.lt('sale_date', untilIso);
 
     const tQ = supabase.from('sales').select('sale_date, total_gross, gross_revenue')
       .eq('organization_id', activeOrgId)
@@ -279,13 +304,19 @@ export default function AttributionPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={period} onValueChange={v => setPeriod(v as Period)}>
-            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="mtd">Month-to-date</SelectItem>
               <SelectItem value="30">Last 30 days</SelectItem>
               <SelectItem value="90">Last 90 days</SelectItem>
               <SelectItem value="12m">Last 12 months</SelectItem>
               <SelectItem value="all">All time</SelectItem>
+              <SelectGroup>
+                <SelectLabel>Specific month</SelectLabel>
+                {monthOptions(24).map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
           <Button variant="outline" onClick={exportVendorRoi}>
