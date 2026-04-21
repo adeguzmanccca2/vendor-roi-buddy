@@ -59,16 +59,27 @@ const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-type Period = 'mtd' | '30' | '90' | '12m' | 'all';
+type Period = 'mtd' | '30' | '90' | '12m' | 'all' | `m:${string}`;
 
-function periodStart(p: Period): string | null {
-  const now = new Date();
-  if (p === 'mtd') return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
-  if (p === '30') return new Date(Date.now() - 30 * 86400000).toISOString();
-  if (p === '90') return new Date(Date.now() - 90 * 86400000).toISOString();
-  if (p === '12m') return new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
-  return null;
+function isMonthPeriod(p: Period): p is `m:${string}` {
+  return typeof p === 'string' && p.startsWith('m:');
 }
+
+function periodRange(p: Period): { start: string | null; end: string | null } {
+  const now = new Date();
+  if (p === 'mtd') return { start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), end: null };
+  if (p === '30') return { start: new Date(Date.now() - 30 * 86400000).toISOString(), end: null };
+  if (p === '90') return { start: new Date(Date.now() - 90 * 86400000).toISOString(), end: null };
+  if (p === '12m') return { start: new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString(), end: null };
+  if (isMonthPeriod(p)) {
+    const [y, m] = p.slice(2).split('-').map(Number);
+    const start = new Date(y, m - 1, 1);
+    const end = new Date(y, m, 1); // first day of next month, exclusive
+    return { start: start.toISOString(), end: end.toISOString() };
+  }
+  return { start: null, end: null };
+}
+
 function periodMonths(p: Period): number {
   if (p === 'mtd') {
     const now = new Date();
@@ -77,7 +88,20 @@ function periodMonths(p: Period): number {
   if (p === '30') return 1;
   if (p === '90') return 3;
   if (p === '12m') return 12;
+  if (isMonthPeriod(p)) return 1;
   return 12;
+}
+
+function monthOptions(count = 24): { value: `m:${string}`; label: string }[] {
+  const now = new Date();
+  const out: { value: `m:${string}`; label: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` as const;
+    const label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    out.push({ value, label });
+  }
+  return out;
 }
 
 const CAT_COLOR: Record<VendorPerf['category'], string> = {
