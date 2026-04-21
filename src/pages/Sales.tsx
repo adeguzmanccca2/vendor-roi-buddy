@@ -67,6 +67,37 @@ const emptyForm = {
   notes: '',
 };
 
+function SortHeader({
+  label,
+  k,
+  sortKey,
+  sortDir,
+  onClick,
+  align = 'left',
+}: {
+  label: string;
+  k: keyof Sale;
+  sortKey: keyof Sale;
+  sortDir: 'asc' | 'desc';
+  onClick: (k: keyof Sale) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sortKey === k;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead className={align === 'right' ? 'text-right' : ''}>
+      <button
+        type="button"
+        onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'} ${align === 'right' ? 'ml-auto' : ''}`}
+      >
+        {label}
+        <Icon className="h-3 w-3" />
+      </button>
+    </TableHead>
+  );
+}
+
 export default function SalesPage() {
   const { activeOrgId, activeOrg } = useActiveOrg();
   const [sales, setSales] = useState<Sale[]>([]);
