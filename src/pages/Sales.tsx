@@ -465,9 +465,10 @@ export default function SalesPage() {
                     </TableCell>
                   </TableRow>
                 ))
-              )}
-            </TableBody>
-          </Table>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
