@@ -14,6 +14,9 @@ import LeadsPage from '@/pages/Leads';
 import UploadPage from '@/pages/Upload';
 import SalesUploadPage from '@/pages/SalesUpload';
 import AttributionPage from '@/pages/Attribution';
+import SourceRulesPage from '@/pages/SourceRules';
+import InventoryPage from '@/pages/Inventory';
+import InventoryUploadPage from '@/pages/InventoryUpload';
 import AdminOverview from '@/pages/admin/AdminOverview';
 import AdminDealerships from '@/pages/admin/AdminDealerships';
 import AdminUsers from '@/pages/admin/AdminUsers';
@@ -78,6 +81,30 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><AttributionPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/source-rules"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><SourceRulesPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/inventory"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><InventoryPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/inventory/upload"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><InventoryUploadPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />
