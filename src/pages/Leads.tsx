@@ -11,7 +11,9 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Upload, Pencil } from 'lucide-react';
+import { Plus, Upload, Pencil, Download } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
   normalizeEmail,
