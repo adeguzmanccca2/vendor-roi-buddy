@@ -11,7 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Upload, Pencil } from 'lucide-react';
+import { Plus, Upload, Pencil, Download } from 'lucide-react';
+import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
   normalizeEmail,
@@ -175,7 +176,22 @@ export default function LeadsPage() {
           <h1 className="text-2xl font-bold text-foreground">Leads</h1>
           <p className="text-sm text-muted-foreground">{activeOrg?.name}</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => {
+            const vMap = new Map(vendors.map(v => [v.id, v.name]));
+            downloadCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, leads.map(l => ({
+              date: l.lead_date ?? '',
+              customer: l.customer_full_name ?? '',
+              email: l.customer_email ?? '',
+              phone: l.customer_phone ?? '',
+              vehicle: l.vehicle_of_interest ?? '',
+              status: l.lead_status,
+              vendor: l.vendor_id ? vMap.get(l.vendor_id) ?? '' : '',
+              manual_override: l.manual_override ? 'yes' : 'no',
+            })));
+          }} disabled={leads.length === 0}>
+            <Download className="mr-1 h-4 w-4" /> Export
+          </Button>
           <Button asChild variant="outline">
             <Link to="/upload"><Upload className="mr-1 h-4 w-4" /> Upload CSV</Link>
           </Button>

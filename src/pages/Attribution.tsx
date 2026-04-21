@@ -5,16 +5,32 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
-import { Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target } from 'lucide-react';
+import {
+  Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
+} from 'lucide-react';
 import { toast } from 'sonner';
+import {
+  ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
+  LineChart, Line, Cell,
+} from 'recharts';
+import { AttributionOverrideDialog } from '@/components/AttributionOverrideDialog';
+import { downloadCsv } from '@/lib/exportCsv';
 
 interface Vendor { id: string; name: string; monthly_cost: number | null }
 interface SaleRow {
   id: string; vendor_id: string | null; lead_id: string | null;
-  customer_full_name: string | null; sale_date: string | null;
+  customer_full_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  normalized_email: string | null;
+  normalized_phone: string | null;
+  organization_id: string;
+  sale_date: string | null;
   total_gross: number | null; gross_revenue: number | null;
   attribution_status: string; attribution_confidence: number | null;
+  manual_override: boolean;
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
+  stock_number: string | null; deal_number: string | null;
 }
 interface LeadCount { vendor_id: string | null }
 
@@ -43,53 +59,84 @@ const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
+type Period = 'mtd' | '30' | '90' | '12m' | 'all';
+
+function periodStart(p: Period): string | null {
+  const now = new Date();
+  if (p === 'mtd') return new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
+  if (p === '30') return new Date(Date.now() - 30 * 86400000).toISOString();
+  if (p === '90') return new Date(Date.now() - 90 * 86400000).toISOString();
+  if (p === '12m') return new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
+  return null;
+}
+function periodMonths(p: Period): number {
+  if (p === 'mtd') {
+    const now = new Date();
+    return now.getDate() / 30;
+  }
+  if (p === '30') return 1;
+  if (p === '90') return 3;
+  if (p === '12m') return 12;
+  return 12;
+}
+
+const CAT_COLOR: Record<VendorPerf['category'], string> = {
+  CUT: 'hsl(var(--destructive))',
+  OPTIMIZE: 'hsl(var(--muted-foreground))',
+  SCALE: 'hsl(142 71% 45%)',
+  NONE: 'hsl(var(--border))',
+};
+
 export default function AttributionPage() {
   const { activeOrgId, activeOrg } = useActiveOrg();
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [leadCounts, setLeadCounts] = useState<Record<string, number>>({});
   const [unattributedLeads, setUnattributedLeads] = useState<number>(0);
   const [sales, setSales] = useState<SaleRow[]>([]);
+  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const [period, setPeriod] = useState<'30' | '90' | 'all'>('90');
+  const [period, setPeriod] = useState<Period>('mtd');
+  const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
+  const [overrideOpen, setOverrideOpen] = useState(false);
 
   const load = async () => {
     if (!activeOrgId) return;
     setLoading(true);
-    const sinceIso = period === 'all'
-      ? null
-      : new Date(Date.now() - parseInt(period, 10) * 86400000).toISOString();
+    const sinceIso = periodStart(period);
+    const trendSinceIso = new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString();
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
       .eq('organization_id', activeOrgId).order('name');
     const lQ = supabase.from('leads').select('vendor_id')
       .eq('organization_id', activeOrgId);
-    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, sale_date, total_gross, gross_revenue, attribution_status, attribution_confidence, vehicle_year, vehicle_make, vehicle_model')
-      .eq('organization_id', activeOrgId);
-    if (sinceIso) {
-      sQ = sQ.gte('sale_date', sinceIso);
-      // leads can't be filtered server-side without a date column always set; client-side ok
-    }
+    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
+      .eq('organization_id', activeOrgId)
+      .order('sale_date', { ascending: false });
+    if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
 
-    const [{ data: vData }, { data: lData }, { data: sData }] = await Promise.all([vQ, lQ, sQ]);
-    const vs = (vData ?? []) as Vendor[];
-    const ls = (lData ?? []) as LeadCount[];
-    setVendors(vs);
+    const tQ = supabase.from('sales').select('sale_date, total_gross, gross_revenue')
+      .eq('organization_id', activeOrgId)
+      .gte('sale_date', trendSinceIso);
+
+    const [{ data: vData }, { data: lData }, { data: sData }, { data: tData }] = await Promise.all([vQ, lQ, sQ, tQ]);
+    setVendors((vData ?? []) as Vendor[]);
     const counts: Record<string, number> = {};
     let unassigned = 0;
-    for (const l of ls) {
+    for (const l of (lData ?? []) as LeadCount[]) {
       if (!l.vendor_id) { unassigned++; continue; }
       counts[l.vendor_id] = (counts[l.vendor_id] ?? 0) + 1;
     }
     setLeadCounts(counts);
     setUnattributedLeads(unassigned);
     setSales((sData ?? []) as SaleRow[]);
+    setTrendSales((tData ?? []) as any);
     setLoading(false);
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeOrgId, period]);
 
-  const periodMonths = period === 'all' ? 12 : Math.max(1, Math.round(parseInt(period, 10) / 30));
+  const months = periodMonths(period);
 
   const perf: VendorPerf[] = useMemo(() => {
     const byVendor = new Map<string | null, { revenue: number; sales: number }>();
@@ -100,11 +147,10 @@ export default function AttributionPage() {
       cur.sales += 1;
       byVendor.set(key, cur);
     }
-
     const rows: VendorPerf[] = vendors.map(v => {
       const agg = byVendor.get(v.id) ?? { revenue: 0, sales: 0 };
       const leads = leadCounts[v.id] ?? 0;
-      const cost = Number(v.monthly_cost ?? 0) * periodMonths;
+      const cost = Number(v.monthly_cost ?? 0) * months;
       const cpl = leads > 0 ? cost / leads : 0;
       const cpa = agg.sales > 0 ? cost / agg.sales : 0;
       const closeRate = leads > 0 ? agg.sales / leads : 0;
@@ -114,7 +160,6 @@ export default function AttributionPage() {
         cost, cpl, cpa, closeRate, roi, category: classify(roi, cost),
       };
     });
-
     const unassignedAgg = byVendor.get(null);
     if (unassignedAgg || unattributedLeads > 0) {
       rows.push({
@@ -128,7 +173,7 @@ export default function AttributionPage() {
       });
     }
     return rows.sort((a, b) => b.revenue - a.revenue);
-  }, [vendors, sales, leadCounts, unattributedLeads, periodMonths]);
+  }, [vendors, sales, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
     const t = perf.reduce((acc, r) => ({
@@ -139,6 +184,33 @@ export default function AttributionPage() {
     }), { revenue: 0, cost: 0, sales: 0, leads: 0 });
     return { ...t, roi: t.cost > 0 ? (t.revenue - t.cost) / t.cost : 0 };
   }, [perf]);
+
+  // 12-month revenue trend
+  const trend = useMemo(() => {
+    const buckets: Record<string, number> = {};
+    const now = new Date();
+    for (let i = 11; i >= 0; i--) {
+      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      buckets[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] = 0;
+    }
+    for (const s of trendSales) {
+      if (!s.sale_date) continue;
+      const d = new Date(s.sale_date);
+      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+      if (key in buckets) buckets[key] += Number(s.total_gross ?? s.gross_revenue ?? 0);
+    }
+    return Object.entries(buckets).map(([month, revenue]) => ({
+      month: month.slice(5) + '/' + month.slice(2, 4),
+      revenue,
+    }));
+  }, [trendSales]);
+
+  const roiChart = useMemo(() =>
+    perf.filter(p => p.cost > 0).slice(0, 10).map(p => ({
+      name: p.vendorName.length > 14 ? p.vendorName.slice(0, 14) + '…' : p.vendorName,
+      roi: Math.round(p.roi * 100),
+      category: p.category,
+    })), [perf]);
 
   const runAttribution = async () => {
     if (!activeOrgId) return;
@@ -156,6 +228,41 @@ export default function AttributionPage() {
     }
   };
 
+  const exportVendorRoi = () => {
+    const rows = perf.map(p => ({
+      vendor: p.vendorName,
+      leads: p.leads,
+      sales: p.sales,
+      close_rate_pct: (p.closeRate * 100).toFixed(2),
+      cost: p.cost.toFixed(2),
+      cpl: p.cpl.toFixed(2),
+      cpa: p.cpa.toFixed(2),
+      revenue: p.revenue.toFixed(2),
+      roi_pct: p.cost > 0 ? (p.roi * 100).toFixed(2) : '',
+      category: p.category,
+    }));
+    downloadCsv(`vendor-roi-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  };
+
+  const exportSales = () => {
+    const vendorMap = new Map(vendors.map(v => [v.id, v.name]));
+    const rows = sales.map(s => ({
+      sale_date: s.sale_date ?? '',
+      customer: s.customer_full_name ?? '',
+      email: s.customer_email ?? '',
+      phone: s.customer_phone ?? '',
+      vehicle: [s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' '),
+      stock_number: s.stock_number ?? '',
+      deal_number: s.deal_number ?? '',
+      gross: Number(s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
+      vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
+      attribution: s.attribution_status,
+      confidence: s.attribution_confidence ?? '',
+      manual_override: s.manual_override ? 'yes' : 'no',
+    }));
+    downloadCsv(`sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+  };
+
   const matchedSales = sales.filter(s => s.attribution_status === 'auto' || s.attribution_status === 'manual').length;
   const matchRate = sales.length > 0 ? matchedSales / sales.length : 0;
 
@@ -170,15 +277,23 @@ export default function AttributionPage() {
             {activeOrg?.name} — vendor performance over the selected window.
           </p>
         </div>
-        <div className="flex items-center gap-2">
-          <Select value={period} onValueChange={v => setPeriod(v as any)}>
-            <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
+        <div className="flex flex-wrap items-center gap-2">
+          <Select value={period} onValueChange={v => setPeriod(v as Period)}>
+            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
             <SelectContent>
+              <SelectItem value="mtd">Month-to-date</SelectItem>
               <SelectItem value="30">Last 30 days</SelectItem>
               <SelectItem value="90">Last 90 days</SelectItem>
+              <SelectItem value="12m">Last 12 months</SelectItem>
               <SelectItem value="all">All time</SelectItem>
             </SelectContent>
           </Select>
+          <Button variant="outline" onClick={exportVendorRoi}>
+            <Download className="mr-1 h-4 w-4" /> Vendor ROI
+          </Button>
+          <Button variant="outline" onClick={exportSales}>
+            <Download className="mr-1 h-4 w-4" /> Sales
+          </Button>
           <Button onClick={runAttribution} disabled={running}>
             <Wand2 className="mr-1 h-4 w-4" />
             {running ? 'Matching...' : 'Run Attribution'}
@@ -198,10 +313,54 @@ export default function AttributionPage() {
         />
       </div>
 
+      <div className="grid gap-4 lg:grid-cols-2">
+        <Card>
+          <CardHeader><CardTitle className="text-base">Revenue — last 12 months</CardTitle></CardHeader>
+          <CardContent className="h-64">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <Tooltip
+                  formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
+                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+                />
+                <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </CardContent>
+        </Card>
+
+        <Card>
+          <CardHeader><CardTitle className="text-base">Vendor ROI (selected window)</CardTitle></CardHeader>
+          <CardContent className="h-64">
+            {roiChart.length === 0 ? (
+              <p className="text-sm text-muted-foreground">No vendors with cost data yet.</p>
+            ) : (
+              <ResponsiveContainer width="100%" height="100%">
+                <BarChart data={roiChart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} />
+                  <Tooltip
+                    formatter={(v: any) => [`${v}%`, 'ROI']}
+                    contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+                  />
+                  <Bar dataKey="roi">
+                    {roiChart.map((entry, i) => (
+                      <Cell key={i} fill={CAT_COLOR[entry.category as VendorPerf['category']]} />
+                    ))}
+                  </Bar>
+                </BarChart>
+              </ResponsiveContainer>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Vendor performance</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle className="text-base">Vendor performance</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           {loading ? (
             <p className="p-6 text-sm text-muted-foreground">Loading...</p>
@@ -245,9 +404,7 @@ export default function AttributionPage() {
       </Card>
 
       <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Recent sales ({sales.length})</CardTitle>
-        </CardHeader>
+        <CardHeader><CardTitle className="text-base">Recent sales ({sales.length})</CardTitle></CardHeader>
         <CardContent className="overflow-x-auto p-0">
           {sales.length === 0 ? (
             <p className="p-6 text-sm text-muted-foreground">No sales imported yet for this period.</p>
@@ -260,10 +417,11 @@ export default function AttributionPage() {
                   <th className="px-4 py-2 text-left">Date</th>
                   <th className="px-4 py-2 text-right">Gross</th>
                   <th className="px-4 py-2 text-center">Attribution</th>
+                  <th className="px-4 py-2 text-center"></th>
                 </tr>
               </thead>
               <tbody>
-                {sales.slice(0, 50).map(s => (
+                {sales.slice(0, 100).map(s => (
                   <tr key={s.id} className="border-b">
                     <td className="px-4 py-2">{s.customer_full_name ?? '—'}</td>
                     <td className="px-4 py-2 text-muted-foreground">
@@ -274,7 +432,12 @@ export default function AttributionPage() {
                     </td>
                     <td className="px-4 py-2 text-right">{fmtMoney(Number(s.total_gross ?? s.gross_revenue ?? 0))}</td>
                     <td className="px-4 py-2 text-center">
-                      <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} />
+                      <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
+                    </td>
+                    <td className="px-4 py-2 text-center">
+                      <Button variant="ghost" size="sm" onClick={() => { setOverrideSale(s); setOverrideOpen(true); }}>
+                        <Pencil className="h-3.5 w-3.5" />
+                      </Button>
                     </td>
                   </tr>
                 ))}
@@ -283,6 +446,14 @@ export default function AttributionPage() {
           )}
         </CardContent>
       </Card>
+
+      <AttributionOverrideDialog
+        sale={overrideSale}
+        vendors={vendors}
+        open={overrideOpen}
+        onOpenChange={setOverrideOpen}
+        onSaved={load}
+      />
     </div>
   );
 }
@@ -309,9 +480,9 @@ function CategoryBadge({ cat }: { cat: VendorPerf['category'] }) {
   return <Badge variant="outline">—</Badge>;
 }
 
-function AttributionBadge({ status, confidence }: { status: string; confidence: number }) {
+function AttributionBadge({ status, confidence, manual }: { status: string; confidence: number; manual: boolean }) {
+  if (manual) return <Badge>Manual · 100%</Badge>;
   if (status === 'auto') return <Badge className="bg-blue-600 hover:bg-blue-700">Auto · {confidence}%</Badge>;
-  if (status === 'manual') return <Badge>Manual</Badge>;
   if (status === 'none') return <Badge variant="outline">No match</Badge>;
   return <Badge variant="secondary">Pending</Badge>;
 }
