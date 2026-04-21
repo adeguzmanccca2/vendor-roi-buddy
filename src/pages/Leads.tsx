@@ -414,13 +414,19 @@ export default function LeadsPage() {
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <CardTitle>All Leads ({filtered.length})</CardTitle>
+            <CardTitle>All Leads ({filtered.length} of {leads.length})</CardTitle>
             <div className="flex flex-wrap gap-2">
               <Input
-                placeholder="Search name/email/phone/vehicle"
-                className="w-64"
+                placeholder="Search anything…"
+                className="w-56"
                 value={filter.search}
                 onChange={e => setFilter({ ...filter, search: e.target.value })}
+              />
+              <Input
+                placeholder="VIN contains…"
+                className="w-44"
+                value={filter.vin}
+                onChange={e => setFilter({ ...filter, vin: e.target.value })}
               />
               <Select value={filter.vendor} onValueChange={v => setFilter({ ...filter, vendor: v })}>
                 <SelectTrigger className="w-44"><SelectValue placeholder="Vendor" /></SelectTrigger>
@@ -443,31 +449,34 @@ export default function LeadsPage() {
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : filtered.length === 0 ? (
+          ) : sorted.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No leads match.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
+            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto rounded-md border border-border">
+              <Table className="min-w-[1400px]">
+                <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
                     <TableHead className="w-10">
                       <Checkbox
-                        checked={filtered.length > 0 && filtered.every(l => selected.has(l.id))}
+                        checked={sorted.length > 0 && sorted.every(l => selected.has(l.id))}
                         onCheckedChange={(c) => toggleAll(!!c)}
                         aria-label="Select all"
                       />
                     </TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Contact</TableHead>
-                    <TableHead>Vehicle</TableHead>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead></TableHead>
+                    <SortHeader label="Date" k="lead_date" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Email" k="customer_email" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead>Phone</TableHead>
+                    <SortHeader label="VIN" k="vin" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Vehicle" k="vehicle" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead>Source</TableHead>
+                    <SortHeader label="Vendor" k="vendor" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Status" k="lead_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead className="w-24 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map(l => (
+                  {sorted.map(l => (
                     <TableRow key={l.id} data-state={selected.has(l.id) ? 'selected' : undefined}>
                       <TableCell>
                         <Checkbox
@@ -476,18 +485,18 @@ export default function LeadsPage() {
                           aria-label={`Select lead ${l.customer_full_name ?? ''}`}
                         />
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
                       </TableCell>
                       <TableCell className="font-medium">
                         {l.customer_full_name ?? '—'}
                         {l.manual_override && <Badge variant="outline" className="ml-2 text-[10px]">manual</Badge>}
                       </TableCell>
-                      <TableCell className="text-xs">
-                        <div>{l.customer_email ?? '—'}</div>
-                        <div className="text-muted-foreground">{l.customer_phone ?? '—'}</div>
-                      </TableCell>
-                      <TableCell className="text-sm">{l.vehicle_of_interest ?? '—'}</TableCell>
+                      <TableCell className="text-xs">{l.customer_email ?? '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs">{l.customer_phone ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs">{l.vin ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{vehicleStr(l) || '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{l.source_label ?? '—'}</TableCell>
                       <TableCell>
                         <Select value={l.vendor_id ?? 'none'} onValueChange={v => updateVendor(l.id, v)}>
                           <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
