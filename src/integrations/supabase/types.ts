@@ -16,6 +16,7 @@ export type Database = {
     Tables: {
       leads: {
         Row: {
+          body_style: string | null
           created_at: string
           customer_email: string | null
           customer_first_name: string | null
@@ -23,24 +24,33 @@ export type Database = {
           customer_last_name: string | null
           customer_phone: string | null
           dedup_hash: string | null
+          dol: number | null
           id: string
+          last_price: number | null
           lead_date: string | null
           lead_status: string
+          lotlinx_vdp: number | null
           manual_override: boolean
+          net_new_shoppers: number | null
           normalized_email: string | null
           normalized_phone: string | null
           notes: string | null
           organization_id: string
+          pct_sales_opps_since_campaign: number | null
           raw_upload_id: string | null
           source_label: string | null
+          total_vdp: number | null
           updated_at: string
           vehicle_make: string | null
           vehicle_model: string | null
           vehicle_of_interest: string | null
+          vehicle_trim: string | null
           vehicle_year: number | null
           vendor_id: string | null
+          vin: string | null
         }
         Insert: {
+          body_style?: string | null
           created_at?: string
           customer_email?: string | null
           customer_first_name?: string | null
@@ -48,24 +58,33 @@ export type Database = {
           customer_last_name?: string | null
           customer_phone?: string | null
           dedup_hash?: string | null
+          dol?: number | null
           id?: string
+          last_price?: number | null
           lead_date?: string | null
           lead_status?: string
+          lotlinx_vdp?: number | null
           manual_override?: boolean
+          net_new_shoppers?: number | null
           normalized_email?: string | null
           normalized_phone?: string | null
           notes?: string | null
           organization_id: string
+          pct_sales_opps_since_campaign?: number | null
           raw_upload_id?: string | null
           source_label?: string | null
+          total_vdp?: number | null
           updated_at?: string
           vehicle_make?: string | null
           vehicle_model?: string | null
           vehicle_of_interest?: string | null
+          vehicle_trim?: string | null
           vehicle_year?: number | null
           vendor_id?: string | null
+          vin?: string | null
         }
         Update: {
+          body_style?: string | null
           created_at?: string
           customer_email?: string | null
           customer_first_name?: string | null
@@ -73,22 +92,30 @@ export type Database = {
           customer_last_name?: string | null
           customer_phone?: string | null
           dedup_hash?: string | null
+          dol?: number | null
           id?: string
+          last_price?: number | null
           lead_date?: string | null
           lead_status?: string
+          lotlinx_vdp?: number | null
           manual_override?: boolean
+          net_new_shoppers?: number | null
           normalized_email?: string | null
           normalized_phone?: string | null
           notes?: string | null
           organization_id?: string
+          pct_sales_opps_since_campaign?: number | null
           raw_upload_id?: string | null
           source_label?: string | null
+          total_vdp?: number | null
           updated_at?: string
           vehicle_make?: string | null
           vehicle_model?: string | null
           vehicle_of_interest?: string | null
+          vehicle_trim?: string | null
           vehicle_year?: number | null
           vendor_id?: string | null
+          vin?: string | null
         }
         Relationships: [
           {
