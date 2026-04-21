@@ -74,12 +74,16 @@ export default function SalesUploadPage() {
   const [result, setResult] = useState<{ inserted: number; duplicates: number; uploadId: string } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [rowSkips, setRowSkips] = useState<{ row: number; reason: string }[]>([]);
+  const [importStatus, setImportStatus] = useState<string | null>(null);
 
   const onFile = (f: File | null) => {
     setFile(f);
     setRows([]);
     setHeaders([]);
     setResult(null);
+    setImportError(null);
+    setRowSkips([]);
+    setImportStatus(null);
     if (!f) return;
     Papa.parse<Record<string, string>>(f, {
       header: true,
@@ -108,8 +112,23 @@ export default function SalesUploadPage() {
     setBusy(true);
     setImportError(null);
     setRowSkips([]);
+    setImportStatus('Creating upload record...');
     try {
-      const { data: upload, error: upErr } = await supabase
+      const withTimeout = async <T,>(promise: PromiseLike<T>, label: string, ms = 30000): Promise<T> => {
+        let timer: ReturnType<typeof setTimeout> | undefined;
+        try {
+          return await Promise.race([
+            promise,
+            new Promise<never>((_, reject) => {
+              timer = setTimeout(() => reject(new Error(`${label} timed out after ${Math.round(ms / 1000)} seconds`)), ms);
+            }),
+          ]);
+        } finally {
+          if (timer) clearTimeout(timer);
+        }
+      };
+
+      const { data: upload, error: upErr } = await withTimeout(supabase
         .from('raw_sales_uploads')
         .insert({
           organization_id: activeOrgId,
@@ -120,7 +139,7 @@ export default function SalesUploadPage() {
           raw_rows: rows.slice(0, 1000),
         })
         .select('id')
-        .single();
+        .single(), 'Creating upload record');
       if (upErr || !upload) throw upErr ?? new Error('Upload create failed');
 
       const get = (row: Record<string, string>, key: FieldKey) => {
@@ -135,6 +154,7 @@ export default function SalesUploadPage() {
 
       const rowErrors: { row: number; reason: string }[] = [];
 
+      setImportStatus(`Preparing ${rows.length} rows...`);
       for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
         const row = rows[rowIdx];
         try {
@@ -238,21 +258,34 @@ export default function SalesUploadPage() {
       let inserted = 0;
       if (toInsert.length > 0) {
         const hashes = toInsert.map(r => r.dedup_hash);
-        const { data: existing } = await supabase
-          .from('sales')
-          .select('dedup_hash')
-          .eq('organization_id', activeOrgId)
-          .in('dedup_hash', hashes);
-        const existingSet = new Set((existing ?? []).map(e => e.dedup_hash));
+        const existingSet = new Set<string>();
+        const DEDUP_CHUNK = 25;
+        for (let i = 0; i < hashes.length; i += DEDUP_CHUNK) {
+          const hashSlice = hashes.slice(i, i + DEDUP_CHUNK);
+          setImportStatus(`Checking duplicates ${Math.min(i + DEDUP_CHUNK, hashes.length)} of ${hashes.length}...`);
+          const { data: existing, error: existingErr } = await withTimeout(supabase
+            .from('sales')
+            .select('dedup_hash')
+            .eq('organization_id', activeOrgId)
+            .in('dedup_hash', hashSlice), `Duplicate check starting at row ${i + 1}`);
+          if (existingErr) {
+            console.error(`[SalesUpload] duplicate check ${i}-${i + hashSlice.length} failed:`, existingErr);
+            throw new Error(`DB rejected duplicate check (starting row ${i + 1}): ${existingErr.message}${existingErr.details ? ' — ' + existingErr.details : ''}${existingErr.hint ? ' — ' + existingErr.hint : ''}`);
+          }
+          (existing ?? []).forEach(e => {
+            if (e.dedup_hash) existingSet.add(e.dedup_hash);
+          });
+        }
         const filtered = toInsert.filter(r => {
           if (existingSet.has(r.dedup_hash)) { existingDupes++; return false; }
           return true;
         });
 
-        const CHUNK = 50;
+        const CHUNK = 25;
         for (let i = 0; i < filtered.length; i += CHUNK) {
           const slice = filtered.slice(i, i + CHUNK);
-          const { error: insErr } = await supabase.from('sales').insert(slice);
+          setImportStatus(`Inserting sales ${Math.min(i + CHUNK, filtered.length)} of ${filtered.length}...`);
+          const { error: insErr } = await withTimeout(supabase.from('sales').insert(slice), `Sales insert starting at row ${i + 1}`);
           if (insErr) {
             console.error(`[SalesUpload] insert chunk ${i}-${i + slice.length} failed:`, insErr, 'sample row:', slice[0]);
             throw new Error(`DB rejected sales insert (chunk starting row ${i + 1}): ${insErr.message}${insErr.details ? ' — ' + insErr.details : ''}${insErr.hint ? ' — ' + insErr.hint : ''}`);
@@ -261,10 +294,12 @@ export default function SalesUploadPage() {
         }
       }
 
-      await supabase.from('raw_sales_uploads').update({
+      setImportStatus('Finalizing import...');
+      const { error: updateErr } = await withTimeout(supabase.from('raw_sales_uploads').update({
         inserted_count: inserted,
         duplicate_count: dupesInBatch + existingDupes,
-      }).eq('id', upload.id);
+      }).eq('id', upload.id), 'Finalizing upload record');
+      if (updateErr) console.warn('[SalesUpload] upload summary update failed:', updateErr);
 
       setResult({ inserted, duplicates: dupesInBatch + existingDupes, uploadId: upload.id });
       toast.success(`Imported ${inserted} sales (${dupesInBatch + existingDupes} duplicates skipped)`);
@@ -275,6 +310,7 @@ export default function SalesUploadPage() {
       toast.error(msg);
     } finally {
       setBusy(false);
+      setImportStatus(null);
     }
   };
 
