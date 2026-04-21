@@ -100,6 +100,31 @@ export default function UploadPage() {
 
   const preview = useMemo(() => rows.slice(0, 5), [rows]);
 
+  // Sanity check: warn when name columns contain $ or pure numbers (sign of a misclassified column)
+  const nameWarnings = useMemo(() => {
+    if (rows.length === 0) return [] as { field: string; column: string; samples: string[]; count: number }[];
+    const fieldsToCheck: { key: FieldKey; label: string }[] = [
+      { key: 'first_name', label: 'First name' },
+      { key: 'last_name', label: 'Last name' },
+      { key: 'full_name', label: 'Full name' },
+    ];
+    const sample = rows.slice(0, 50);
+    const out: { field: string; column: string; samples: string[]; count: number }[] = [];
+    for (const f of fieldsToCheck) {
+      const col = mapping[f.key];
+      if (!col || col === NONE) continue;
+      const bad: string[] = [];
+      for (const r of sample) {
+        const v = (r[col] ?? '').toString().trim();
+        if (looksNonHuman(v)) bad.push(v);
+      }
+      if (bad.length > 0) {
+        out.push({ field: f.label, column: col, samples: Array.from(new Set(bad)).slice(0, 3), count: bad.length });
+      }
+    }
+    return out;
+  }, [rows, mapping]);
+
   const ingest = async () => {
     if (!activeOrgId || !user || !file) return;
     if (rows.length === 0) return toast.error('No rows to import');
