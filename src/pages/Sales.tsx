@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   AlertDialog,
@@ -45,8 +46,14 @@ interface Sale {
   salesperson: string | null;
   source_label: string | null;
   attribution_status: string;
+  vendor_id: string | null;
   notes: string | null;
 }
+
+interface VendorOption { id: string; name: string }
+
+const NO_VENDOR = '__none__';
+
 
 const emptyForm = {
   customer_full_name: '',
@@ -64,6 +71,7 @@ const emptyForm = {
   total_gross: '',
   salesperson: '',
   source_label: '',
+  vendor_id: '',
   notes: '',
 };
 
@@ -101,6 +109,7 @@ function SortHeader({
 export default function SalesPage() {
   const { activeOrgId, activeOrg } = useActiveOrg();
   const [sales, setSales] = useState<Sale[]>([]);
+  const [vendorList, setVendorList] = useState<VendorOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [vinFilter, setVinFilter] = useState('');
@@ -114,6 +123,12 @@ export default function SalesPage() {
   const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
+  const vendorMap = useMemo(() => {
+    const m = new Map<string, string>();
+    vendorList.forEach(v => m.set(v.id, v.name));
+    return m;
+  }, [vendorList]);
+
   const toggleSort = (key: keyof Sale) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
     else {
@@ -125,8 +140,19 @@ export default function SalesPage() {
   useEffect(() => {
     if (!activeOrgId) return;
     void load();
+    void loadVendors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId]);
+
+  async function loadVendors() {
+    if (!activeOrgId) return;
+    const { data, error } = await supabase
+      .from('vendors')
+      .select('id, name')
+      .eq('organization_id', activeOrgId)
+      .order('name');
+    if (!error) setVendorList((data ?? []) as VendorOption[]);
+  }
 
   async function load() {
     if (!activeOrgId) return;
@@ -134,7 +160,7 @@ export default function SalesPage() {
     const { data, error } = await supabase
       .from('sales')
       .select(
-        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, notes',
+        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, vendor_id, notes',
       )
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false, nullsFirst: false })
@@ -245,12 +271,15 @@ export default function SalesPage() {
       total_gross: sale.total_gross != null ? String(sale.total_gross) : '',
       salesperson: sale.salesperson ?? '',
       source_label: sale.source_label ?? '',
+      vendor_id: sale.vendor_id ?? '',
       notes: sale.notes ?? '',
     });
   };
 
   const saveEdit = async () => {
     if (!editing) return;
+    const newVendorId = form.vendor_id ? form.vendor_id : null;
+    const vendorChanged = (editing.vendor_id ?? null) !== newVendorId;
     const payload: any = {
       customer_full_name: form.customer_full_name || null,
       customer_email: form.customer_email || null,
@@ -267,9 +296,15 @@ export default function SalesPage() {
       total_gross: form.total_gross ? Number(form.total_gross) : null,
       salesperson: form.salesperson || null,
       source_label: form.source_label || null,
+      vendor_id: newVendorId,
       notes: form.notes || null,
       manual_override: true,
     };
+    // If user manually picked/cleared a vendor, lock attribution as manual so re-runs don't overwrite.
+    if (vendorChanged) {
+      payload.attribution_status = newVendorId ? 'manual' : 'none';
+      payload.attribution_confidence = 100;
+    }
     const { error } = await supabase.from('sales').update(payload).eq('id', editing.id);
     if (error) {
       toast.error('Update failed', { description: error.message });
@@ -307,6 +342,7 @@ export default function SalesPage() {
       total_gross: s.total_gross ?? '',
       salesperson: s.salesperson ?? '',
       source_label: s.source_label ?? '',
+      vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution_status: s.attribution_status,
     }));
     downloadCsv(`sales-${activeOrg?.name ?? 'export'}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
@@ -432,6 +468,7 @@ export default function SalesPage() {
                   <SortHeader label="Price" k="sale_price" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Total gross" k="total_gross" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
@@ -439,13 +476,13 @@ export default function SalesPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
                       Loading sales...
                     </TableCell>
                   </TableRow>
                 ) : sorted.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
                       {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
                     </TableCell>
                   </TableRow>
@@ -470,6 +507,11 @@ export default function SalesPage() {
                     <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
                     <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
                     <TableCell>{sale.salesperson ?? '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {sale.vendor_id
+                        ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
                         {sale.attribution_status}
@@ -570,6 +612,21 @@ export default function SalesPage() {
             <div>
               <Label>Source</Label>
               <Input value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} />
+            </div>
+            <div>
+              <Label>Vendor</Label>
+              <Select
+                value={form.vendor_id || NO_VENDOR}
+                onValueChange={v => setForm({ ...form, vendor_id: v === NO_VENDOR ? '' : v })}
+              >
+                <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_VENDOR}>— None —</SelectItem>
+                  {vendorList.map(v => (
+                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div className="md:col-span-2">
               <Label>Notes</Label>
