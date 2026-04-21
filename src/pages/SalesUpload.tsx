@@ -414,6 +414,16 @@ export default function SalesUploadPage() {
             </Alert>
           )}
 
+          {importStatus && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Import in progress</AlertTitle>
+              <AlertDescription className="text-xs mt-2">
+                {importStatus}
+              </AlertDescription>
+            </Alert>
+          )}
+
           {rowSkips.length > 0 && (
             <Alert>
               <AlertTriangle className="h-4 w-4" />
