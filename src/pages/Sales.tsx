@@ -182,6 +182,11 @@ export default function SalesPage() {
     const from = dateFrom ? new Date(dateFrom).getTime() : null;
     const to = dateTo ? new Date(dateTo).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
     return sales.filter(sale => {
+      if (vendorFilter !== '__all__') {
+        if (vendorFilter === '__none__') {
+          if (sale.vendor_id) return false;
+        } else if (sale.vendor_id !== vendorFilter) return false;
+      }
       if (v && !(sale.vin ?? '').toLowerCase().includes(v)) return false;
       if (n && !(sale.customer_full_name ?? '').toLowerCase().includes(n)) return false;
       if (from || to) {
