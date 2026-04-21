@@ -4,7 +4,7 @@ import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import {
   Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
 } from 'lucide-react';
