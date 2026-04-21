@@ -128,92 +128,105 @@ export default function SalesUploadPage() {
       const toInsert: any[] = [];
       let dupesInBatch = 0;
 
-      for (const row of rows) {
-        const fullName = get(row, 'full_name') ||
-          [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
-        const email = get(row, 'email');
-        const phone = get(row, 'phone');
-        const homePhone = get(row, 'home_phone');
-        const workPhone = get(row, 'work_phone');
-        const vin = get(row, 'vin');
-        const stock = get(row, 'stock_number');
-        const dmsId = get(row, 'dms_deal_id');
+      const rowErrors: { row: number; reason: string }[] = [];
 
-        // Skip only fully empty rows (no identifying info at all)
-        if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) continue;
+      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+        const row = rows[rowIdx];
+        try {
+          const fullName = get(row, 'full_name') ||
+            [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
+          const email = get(row, 'email');
+          const phone = get(row, 'phone');
+          const homePhone = get(row, 'home_phone');
+          const workPhone = get(row, 'work_phone');
+          const vin = get(row, 'vin');
+          const stock = get(row, 'stock_number');
+          const dmsId = get(row, 'dms_deal_id');
 
-        const normEmail = normalizeEmail(email);
-        const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
-        const veh = get(row, 'vehicle');
-        const parsed = parseVehicle(veh);
-        const { first, last } = splitName(fullName);
-        const sd = parseLeadDate(get(row, 'sale_date'));
-        const dActive = parseLeadDate(get(row, 'date_active'));
-        const bday = parseLeadDate(get(row, 'birthday'));
-        const invAcq = parseLeadDate(get(row, 'inventory_acquired_date'));
+          // Skip only fully empty rows (no identifying info at all)
+          if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) {
+            rowErrors.push({ row: rowIdx + 2, reason: 'no identifying info' });
+            continue;
+          }
 
-        const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
-        const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
-        const totalCol = normalizeRevenue(get(row, 'total_gross'));
-        const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
-        const total = totalCol ?? ((front + back) || gross);
-        const salePrice = normalizeRevenue(get(row, 'sale_price'));
+          const normEmail = normalizeEmail(email);
+          const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
+          const veh = get(row, 'vehicle');
+          const parsed = parseVehicle(veh);
+          const { first, last } = splitName(fullName);
+          const sd = parseLeadDate(get(row, 'sale_date'));
+          const dActive = parseLeadDate(get(row, 'date_active'));
+          const bday = parseLeadDate(get(row, 'birthday'));
+          const invAcq = parseLeadDate(get(row, 'inventory_acquired_date'));
 
-        // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
-        const dealKey = dmsId || stock || vin;
-        const hash = await buildDedupHash({
-          email: normEmail,
-          phone: normPhone,
-          name: normalizeName(fullName) + '|' + (sd ?? ''),
-          vehicle: normalizeName(veh) + '|' + dealKey,
-        });
-        if (seenHashes.has(hash)) { dupesInBatch++; continue; }
-        seenHashes.add(hash);
+          const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
+          const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
+          const totalCol = normalizeRevenue(get(row, 'total_gross'));
+          const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
+          const total = totalCol ?? ((front + back) || gross);
+          const salePrice = normalizeRevenue(get(row, 'sale_price'));
 
-        toInsert.push({
-          organization_id: activeOrgId,
-          raw_upload_id: upload.id,
-          customer_first_name: first || get(row, 'first_name') || null,
-          customer_last_name: last || get(row, 'last_name') || null,
-          customer_full_name: fullName || null,
-          customer_email: email || null,
-          customer_phone: phone || null,
-          home_phone: homePhone || null,
-          work_phone: workPhone || null,
-          address: get(row, 'address') || null,
-          city: get(row, 'city') || null,
-          state: get(row, 'state') || null,
-          zip_code: get(row, 'zip_code') || null,
-          birthday: bday ? bday.slice(0, 10) : null,
-          normalized_email: normEmail,
-          normalized_phone: normPhone,
-          dedup_hash: hash,
-          vehicle_of_interest: veh || null,
-          vehicle_year: parsed.year,
-          vehicle_make: parsed.make,
-          vehicle_model: parsed.model,
-          vin: vin || null,
-          stock_number: stock || null,
-          deal_number: dmsId || null,
-          dms_deal_id: dmsId || null,
-          salesperson: get(row, 'salesperson') || null,
-          fi_manager: get(row, 'fi_manager') || null,
-          up_type: get(row, 'up_type') || null,
-          source_label: get(row, 'source') || null,
-          deal_status: get(row, 'deal_status') || null,
-          profit_loss: get(row, 'profit_loss') || null,
-          new_used: get(row, 'new_used') || null,
-          sale_date: sd ?? new Date().toISOString(),
-          date_active: dActive,
-          inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
-          gross_revenue: gross,
-          front_gross: front,
-          back_gross: back,
-          total_gross: total,
-          sale_price: salePrice,
-          attribution_status: 'unmatched',
-        });
+          // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
+          const dealKey = dmsId || stock || vin;
+          const hash = await buildDedupHash({
+            email: normEmail,
+            phone: normPhone,
+            name: normalizeName(fullName) + '|' + (sd ?? ''),
+            vehicle: normalizeName(veh) + '|' + dealKey,
+          });
+          if (seenHashes.has(hash)) { dupesInBatch++; continue; }
+          seenHashes.add(hash);
+
+          toInsert.push({
+            organization_id: activeOrgId,
+            raw_upload_id: upload.id,
+            customer_first_name: first || get(row, 'first_name') || null,
+            customer_last_name: last || get(row, 'last_name') || null,
+            customer_full_name: fullName || null,
+            customer_email: email || null,
+            customer_phone: phone || null,
+            home_phone: homePhone || null,
+            work_phone: workPhone || null,
+            address: get(row, 'address') || null,
+            city: get(row, 'city') || null,
+            state: get(row, 'state') || null,
+            zip_code: get(row, 'zip_code') || null,
+            birthday: bday ? bday.slice(0, 10) : null,
+            normalized_email: normEmail,
+            normalized_phone: normPhone,
+            dedup_hash: hash,
+            vehicle_of_interest: veh || null,
+            vehicle_year: parsed.year,
+            vehicle_make: parsed.make,
+            vehicle_model: parsed.model,
+            vin: vin || null,
+            stock_number: stock || null,
+            deal_number: dmsId || null,
+            dms_deal_id: dmsId || null,
+            salesperson: get(row, 'salesperson') || null,
+            fi_manager: get(row, 'fi_manager') || null,
+            up_type: get(row, 'up_type') || null,
+            source_label: get(row, 'source') || null,
+            deal_status: get(row, 'deal_status') || null,
+            profit_loss: get(row, 'profit_loss') || null,
+            new_used: get(row, 'new_used') || null,
+            sale_date: sd ?? new Date().toISOString(),
+            date_active: dActive,
+            inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
+            gross_revenue: gross,
+            front_gross: front,
+            back_gross: back,
+            total_gross: total,
+            sale_price: salePrice,
+            attribution_status: 'unmatched',
+          });
+        } catch (rowErr: any) {
+          console.error(`[SalesUpload] row ${rowIdx + 2} failed:`, rowErr, row);
+          rowErrors.push({ row: rowIdx + 2, reason: rowErr?.message ?? String(rowErr) });
+        }
       }
+
+      console.log(`[SalesUpload] prepared ${toInsert.length} rows, ${rowErrors.length} skipped`);
 
       let existingDupes = 0;
       let inserted = 0;
