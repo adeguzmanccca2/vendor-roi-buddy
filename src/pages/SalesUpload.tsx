@@ -24,19 +24,38 @@ import {
 } from '@/lib/normalize';
 
 const FIELDS = [
+  { key: 'row_number', label: 'Row #', candidates: ['row', 'row #', 'row number', '#'] },
+  { key: 'full_name', label: 'Name', candidates: ['name', 'full name', 'customer name', 'buyer', 'buyer name'] },
   { key: 'first_name', label: 'First name', candidates: ['first name', 'firstname', 'first', 'fname', 'buyer first'] },
   { key: 'last_name', label: 'Last name', candidates: ['last name', 'lastname', 'last', 'lname', 'surname', 'buyer last'] },
-  { key: 'full_name', label: 'Full name', candidates: ['full name', 'name', 'customer name', 'buyer', 'buyer name'] },
-  { key: 'email', label: 'Email', candidates: ['email', 'e-mail', 'customer email', 'buyer email'] },
-  { key: 'phone', label: 'Phone', candidates: ['phone', 'mobile', 'cell', 'tel', 'phone number'] },
-  { key: 'vehicle', label: 'Vehicle (year/make/model)', candidates: ['vehicle', 'sold vehicle', 'unit', 'description', 'model'] },
-  { key: 'sale_date', label: 'Sale date', candidates: ['sale date', 'sold date', 'deal date', 'date', 'closed', 'delivery date'] },
-  { key: 'stock_number', label: 'Stock #', candidates: ['stock', 'stock number', 'stock#'] },
-  { key: 'deal_number', label: 'Deal #', candidates: ['deal', 'deal number', 'deal#', 'invoice'] },
+  { key: 'address', label: 'Address', candidates: ['address', 'street', 'street address'] },
+  { key: 'city', label: 'City', candidates: ['city'] },
+  { key: 'state', label: 'State', candidates: ['state', 'province'] },
+  { key: 'zip_code', label: 'Zip code', candidates: ['zip', 'zip code', 'postal', 'postal code'] },
+  { key: 'birthday', label: 'Birthday', candidates: ['birthday', 'birth date', 'dob', 'date of birth'] },
+  { key: 'email', label: 'Email address', candidates: ['email', 'e-mail', 'email address', 'customer email', 'buyer email'] },
+  { key: 'home_phone', label: 'Home phone', candidates: ['home phone', 'home', 'home tel'] },
+  { key: 'phone', label: 'Cell phone', candidates: ['cell phone', 'cell', 'mobile', 'mobile phone'] },
+  { key: 'work_phone', label: 'Work phone', candidates: ['work phone', 'work', 'office phone'] },
+  { key: 'stock_number', label: 'Stock #', candidates: ['stock', 'stock number', 'stock#', 'stock #'] },
+  { key: 'vin', label: 'VIN', candidates: ['vin', 'vehicle vin', 'vin #', 'vin number'] },
+  { key: 'vehicle', label: 'Vehicle (year/make/model)', candidates: ['vehicle', 'sold vehicle', 'unit', 'description'] },
+  { key: 'date_active', label: 'Date active', candidates: ['date active', 'active date', 'first active'] },
+  { key: 'sale_date', label: 'Date sold', candidates: ['date sold', 'sale date', 'sold date', 'deal date', 'closed', 'delivery date'] },
+  { key: 'front_gross', label: 'Front', candidates: ['front', 'front gross', 'fe gross'] },
+  { key: 'back_gross', label: 'Back', candidates: ['back', 'back gross', 'be gross', 'fi gross'] },
+  { key: 'total_gross', label: 'Total', candidates: ['total', 'total gross'] },
+  { key: 'sale_price', label: 'Sale price', candidates: ['sale price', 'price', 'amount'] },
+  { key: 'gross_revenue', label: 'Gross revenue', candidates: ['gross', 'revenue'] },
+  { key: 'profit_loss', label: 'P/L', candidates: ['p/l', 'pl', 'profit/loss', 'profit loss'] },
+  { key: 'new_used', label: 'N/U', candidates: ['n/u', 'nu', 'new/used', 'new used', 'condition'] },
   { key: 'salesperson', label: 'Salesperson', candidates: ['salesperson', 'sales rep', 'rep', 'sold by'] },
-  { key: 'gross_revenue', label: 'Gross revenue', candidates: ['gross', 'revenue', 'sale price', 'price', 'amount', 'total'] },
-  { key: 'front_gross', label: 'Front gross', candidates: ['front gross', 'front', 'fe gross'] },
-  { key: 'back_gross', label: 'Back gross', candidates: ['back gross', 'back', 'be gross', 'fi gross'] },
+  { key: 'fi_manager', label: 'FI Manager', candidates: ['fi manager', 'f&i manager', 'finance manager', 'fi mgr'] },
+  { key: 'up_type', label: 'Up Type', candidates: ['up type', 'up', 'lead type'] },
+  { key: 'source', label: 'Source', candidates: ['source', 'lead source', 'origin'] },
+  { key: 'deal_status', label: 'Deal status', candidates: ['deal status', 'status'] },
+  { key: 'dms_deal_id', label: 'DMS Deal ID', candidates: ['dms deal id', 'dms id', 'deal id', 'deal #', 'deal number', 'deal#', 'invoice'] },
+  { key: 'inventory_acquired_date', label: 'Inventory acquired date', candidates: ['inventory acquired date', 'acquired date', 'inventory date', 'in stock date'] },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
@@ -114,22 +133,34 @@ export default function SalesUploadPage() {
           [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
         const email = get(row, 'email');
         const phone = get(row, 'phone');
-        if (!fullName && !email && !phone) continue;
+        const homePhone = get(row, 'home_phone');
+        const workPhone = get(row, 'work_phone');
+        const vin = get(row, 'vin');
+        const stock = get(row, 'stock_number');
+        const dmsId = get(row, 'dms_deal_id');
+
+        // Skip only fully empty rows (no identifying info at all)
+        if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) continue;
 
         const normEmail = normalizeEmail(email);
-        const normPhone = normalizePhone(phone);
+        const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
         const veh = get(row, 'vehicle');
         const parsed = parseVehicle(veh);
         const { first, last } = splitName(fullName);
         const sd = parseLeadDate(get(row, 'sale_date'));
+        const dActive = parseLeadDate(get(row, 'date_active'));
+        const bday = parseLeadDate(get(row, 'birthday'));
+        const invAcq = parseLeadDate(get(row, 'inventory_acquired_date'));
 
         const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
         const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
-        const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? (front + back);
-        const total = front + back || gross;
+        const totalCol = normalizeRevenue(get(row, 'total_gross'));
+        const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
+        const total = totalCol ?? ((front + back) || gross);
+        const salePrice = normalizeRevenue(get(row, 'sale_price'));
 
-        // Dedup: prefer deal#/stock#, else identity + date
-        const dealKey = get(row, 'deal_number') || get(row, 'stock_number');
+        // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
+        const dealKey = dmsId || stock || vin;
         const hash = await buildDedupHash({
           email: normEmail,
           phone: normPhone,
@@ -147,6 +178,13 @@ export default function SalesUploadPage() {
           customer_full_name: fullName || null,
           customer_email: email || null,
           customer_phone: phone || null,
+          home_phone: homePhone || null,
+          work_phone: workPhone || null,
+          address: get(row, 'address') || null,
+          city: get(row, 'city') || null,
+          state: get(row, 'state') || null,
+          zip_code: get(row, 'zip_code') || null,
+          birthday: bday ? bday.slice(0, 10) : null,
           normalized_email: normEmail,
           normalized_phone: normPhone,
           dedup_hash: hash,
@@ -154,14 +192,25 @@ export default function SalesUploadPage() {
           vehicle_year: parsed.year,
           vehicle_make: parsed.make,
           vehicle_model: parsed.model,
-          stock_number: get(row, 'stock_number') || null,
-          deal_number: get(row, 'deal_number') || null,
+          vin: vin || null,
+          stock_number: stock || null,
+          deal_number: dmsId || null,
+          dms_deal_id: dmsId || null,
           salesperson: get(row, 'salesperson') || null,
+          fi_manager: get(row, 'fi_manager') || null,
+          up_type: get(row, 'up_type') || null,
+          source_label: get(row, 'source') || null,
+          deal_status: get(row, 'deal_status') || null,
+          profit_loss: get(row, 'profit_loss') || null,
+          new_used: get(row, 'new_used') || null,
           sale_date: sd ?? new Date().toISOString(),
+          date_active: dActive,
+          inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
           gross_revenue: gross,
           front_gross: front,
           back_gross: back,
           total_gross: total,
+          sale_price: salePrice,
           attribution_status: 'unmatched',
         });
       }
