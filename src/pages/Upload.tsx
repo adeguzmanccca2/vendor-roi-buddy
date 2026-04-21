@@ -378,20 +378,17 @@ export default function UploadPage() {
               </div>
             )}
             <Button
-              onClick={() => {
-                if (nameWarnings.length > 0) {
-                  const ok = window.confirm(
-                    `Heads up — name columns look misclassified (${nameWarnings.map(w => w.field).join(', ')}). Import anyway?`
-                  );
-                  if (!ok) return;
-                }
-                ingest();
-              }}
-              disabled={busy}
+              onClick={ingest}
+              disabled={busy || nameWarnings.length > 0}
               className="ml-auto"
+              title={nameWarnings.length > 0 ? 'Fix name column mapping above to enable import' : undefined}
             >
               <UploadIcon className="mr-1 h-4 w-4" />
-              {busy ? 'Importing...' : `Import ${rows.length} rows`}
+              {busy
+                ? 'Importing...'
+                : nameWarnings.length > 0
+                  ? 'Fix mapping to import'
+                  : `Import ${rows.length} rows`}
             </Button>
           </div>
         </>
