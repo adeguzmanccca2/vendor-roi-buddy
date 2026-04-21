@@ -304,13 +304,19 @@ export default function AttributionPage() {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Select value={period} onValueChange={v => setPeriod(v as Period)}>
-            <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
+            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>
               <SelectItem value="mtd">Month-to-date</SelectItem>
               <SelectItem value="30">Last 30 days</SelectItem>
               <SelectItem value="90">Last 90 days</SelectItem>
               <SelectItem value="12m">Last 12 months</SelectItem>
               <SelectItem value="all">All time</SelectItem>
+              <SelectGroup>
+                <SelectLabel>Specific month</SelectLabel>
+                {monthOptions(24).map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectGroup>
             </SelectContent>
           </Select>
           <Button variant="outline" onClick={exportVendorRoi}>
