@@ -113,6 +113,7 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [vinFilter, setVinFilter] = useState('');
+  const [vendorFilter, setVendorFilter] = useState<string>('__all__');
   const [nameFilter, setNameFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
@@ -181,6 +182,11 @@ export default function SalesPage() {
     const from = dateFrom ? new Date(dateFrom).getTime() : null;
     const to = dateTo ? new Date(dateTo).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
     return sales.filter(sale => {
+      if (vendorFilter !== '__all__') {
+        if (vendorFilter === '__none__') {
+          if (sale.vendor_id) return false;
+        } else if (sale.vendor_id !== vendorFilter) return false;
+      }
       if (v && !(sale.vin ?? '').toLowerCase().includes(v)) return false;
       if (n && !(sale.customer_full_name ?? '').toLowerCase().includes(n)) return false;
       if (from || to) {
@@ -209,7 +215,7 @@ export default function SalesPage() {
       }
       return true;
     });
-  }, [sales, search, vinFilter, nameFilter, dateFrom, dateTo]);
+  }, [sales, search, vinFilter, nameFilter, dateFrom, dateTo, vendorFilter]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
@@ -251,6 +257,7 @@ export default function SalesPage() {
     setNameFilter('');
     setDateFrom('');
     setDateTo('');
+    setVendorFilter('__all__');
   };
 
   const openEdit = (sale: Sale) => {
@@ -362,7 +369,7 @@ export default function SalesPage() {
     );
   }
 
-  const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo);
+  const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo) || vendorFilter !== '__all__';
 
   return (
     <div className="space-y-6">
@@ -388,7 +395,7 @@ export default function SalesPage() {
           <CardTitle className="text-base">Filters</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
             <div>
               <Label className="text-xs">Search</Label>
               <div className="relative">
@@ -408,6 +415,19 @@ export default function SalesPage() {
             <div>
               <Label className="text-xs">VIN</Label>
               <Input placeholder="VIN contains..." value={vinFilter} onChange={e => setVinFilter(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Vendor</Label>
+              <Select value={vendorFilter} onValueChange={setVendorFilter}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All vendors</SelectItem>
+                  <SelectItem value="__none__">Unassigned</SelectItem>
+                  {vendorList.map(v => (
+                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Sold from</Label>
