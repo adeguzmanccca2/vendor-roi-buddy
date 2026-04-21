@@ -30,9 +30,21 @@ const FIELDS = [
   { key: 'full_name', label: 'Full name', candidates: ['full name', 'name', 'customer name', 'lead name'] },
   { key: 'email', label: 'Email', candidates: ['email', 'e-mail', 'customer email'] },
   { key: 'phone', label: 'Phone', candidates: ['phone', 'mobile', 'cell', 'tel', 'phone number'] },
-  { key: 'vehicle', label: 'Vehicle of interest', candidates: ['vehicle', 'voi', 'vehicle of interest', 'desired vehicle', 'model'] },
+  { key: 'vehicle', label: 'Vehicle of interest', candidates: ['vehicle', 'voi', 'vehicle of interest', 'desired vehicle'] },
   { key: 'lead_date', label: 'Lead date', candidates: ['lead date', 'date', 'created', 'submitted', 'timestamp'] },
   { key: 'source', label: 'Source label', candidates: ['source', 'lead source', 'origin'] },
+  { key: 'vin', label: 'VIN', candidates: ['vin', 'vehicle vin', 'vin number'] },
+  { key: 'year', label: 'Year', candidates: ['year', 'model year', 'vehicle year'] },
+  { key: 'make', label: 'Make', candidates: ['make', 'vehicle make'] },
+  { key: 'model', label: 'Model', candidates: ['model', 'vehicle model'] },
+  { key: 'trim', label: 'Trim', candidates: ['trim', 'vehicle trim'] },
+  { key: 'body_style', label: 'Body style', candidates: ['body style', 'body', 'bodystyle', 'body type'] },
+  { key: 'dol', label: 'DOL (Days on lot)', candidates: ['dol', 'days on lot', 'age', 'days in stock'] },
+  { key: 'last_price', label: 'Last price', candidates: ['last price', 'price', 'list price', 'asking price'] },
+  { key: 'lotlinx_vdp', label: 'Lotlinx VDP', candidates: ['lotlinx vdp', 'lotlinx', 'll vdp'] },
+  { key: 'total_vdp', label: 'Total VDP', candidates: ['total vdp', 'vdp', 'vdp total', 'vdps'] },
+  { key: 'net_new_shoppers', label: 'Net new shoppers', candidates: ['net new shoppers', 'new shoppers', 'nns'] },
+  { key: 'pct_sales_opps', label: '% Sales opps since campaign', candidates: ['percentage sales opportunities', 'sales opportunities', '% sales opps', 'pct sales opps', 'sales opps since campaign'] },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
@@ -122,19 +134,39 @@ export default function UploadPage() {
           [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
         const email = get(row, 'email');
         const phone = get(row, 'phone');
-        if (!fullName && !email && !phone) continue;
+        const veh = get(row, 'vehicle');
+        const vin = get(row, 'vin');
+
+        // Skip only truly empty rows (no identifier of any kind)
+        if (!fullName && !email && !phone && !veh && !vin) continue;
 
         const normEmail = normalizeEmail(email);
         const normPhone = normalizePhone(phone);
-        const veh = get(row, 'vehicle');
         const parsed = parseVehicle(veh);
         const { first, last } = splitName(fullName);
+
+        // Prefer explicit Year/Make/Model columns; fall back to parsed VOI text
+        const yearRaw = get(row, 'year');
+        const yearNum = yearRaw ? parseInt(yearRaw, 10) : NaN;
+        const explicitYear = !isNaN(yearNum) ? yearNum : null;
+        const explicitMake = get(row, 'make') || null;
+        const explicitModel = get(row, 'model') || null;
+
+        const toNum = (s: string): number | null => {
+          if (!s) return null;
+          const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
+          return isNaN(n) ? null : n;
+        };
+        const toInt = (s: string): number | null => {
+          const n = toNum(s);
+          return n === null ? null : Math.round(n);
+        };
 
         const hash = await buildDedupHash({
           email: normEmail,
           phone: normPhone,
           name: normalizeName(fullName),
-          vehicle: normalizeName(veh),
+          vehicle: normalizeName(veh || vin),
         });
         if (seenHashes.has(hash)) { dupesInBatch++; continue; }
         seenHashes.add(hash);
@@ -152,9 +184,18 @@ export default function UploadPage() {
           normalized_phone: normPhone,
           dedup_hash: hash,
           vehicle_of_interest: veh || null,
-          vehicle_year: parsed.year,
-          vehicle_make: parsed.make,
-          vehicle_model: parsed.model,
+          vehicle_year: explicitYear ?? parsed.year,
+          vehicle_make: explicitMake ?? parsed.make,
+          vehicle_model: explicitModel ?? parsed.model,
+          vin: vin || null,
+          vehicle_trim: get(row, 'trim') || null,
+          body_style: get(row, 'body_style') || null,
+          dol: toInt(get(row, 'dol')),
+          last_price: toNum(get(row, 'last_price')),
+          lotlinx_vdp: toInt(get(row, 'lotlinx_vdp')),
+          total_vdp: toInt(get(row, 'total_vdp')),
+          net_new_shoppers: toInt(get(row, 'net_new_shoppers')),
+          pct_sales_opps_since_campaign: toNum(get(row, 'pct_sales_opps')),
           lead_date: parseLeadDate(get(row, 'lead_date')) ?? new Date().toISOString(),
           source_label: get(row, 'source') || null,
           lead_status: 'new',
