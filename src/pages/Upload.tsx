@@ -333,7 +333,7 @@ export default function UploadPage() {
           </Card>
 
           <Card>
-            <CardHeader><CardTitle className="text-base">3. Preview (first 5 rows)</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">3. Raw preview (first 5 rows)</CardTitle></CardHeader>
             <CardContent className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
@@ -349,6 +349,59 @@ export default function UploadPage() {
                   ))}
                 </tbody>
               </table>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">4. Mapped preview — how it will be imported</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Only mapped fields are shown. Yellow/red cells flag suspicious values (e.g. $ or pure numbers in name fields).
+              </p>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              {(() => {
+                const mappedFields = FIELDS.filter(f => mapping[f.key] && mapping[f.key] !== NONE);
+                if (mappedFields.length === 0) {
+                  return <p className="text-xs text-muted-foreground">No fields mapped yet.</p>;
+                }
+                const nameKeys = new Set(['first_name', 'last_name', 'full_name']);
+                return (
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="border-b">
+                        {mappedFields.map(f => (
+                          <th key={f.key} className="px-2 py-1 text-left font-medium whitespace-nowrap">
+                            <div className="text-foreground">{f.label}</div>
+                            <div className="text-[10px] font-normal text-muted-foreground">
+                              ← {mapping[f.key]}
+                            </div>
+                          </th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {preview.map((r, i) => (
+                        <tr key={i} className="border-b">
+                          {mappedFields.map(f => {
+                            const v = (r[mapping[f.key]] ?? '').toString().trim();
+                            const flag = nameKeys.has(f.key) && looksNonHuman(v);
+                            return (
+                              <td
+                                key={f.key}
+                                className={`px-2 py-1 whitespace-nowrap ${flag ? 'bg-destructive/10 text-destructive font-medium' : 'text-muted-foreground'}`}
+                                title={flag ? 'Looks like a price/number — not a name' : undefined}
+                              >
+                                {v || <span className="text-muted-foreground/50">—</span>}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                );
+              })()}
             </CardContent>
           </Card>
 
