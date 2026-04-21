@@ -133,22 +133,34 @@ export default function SalesUploadPage() {
           [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
         const email = get(row, 'email');
         const phone = get(row, 'phone');
-        if (!fullName && !email && !phone) continue;
+        const homePhone = get(row, 'home_phone');
+        const workPhone = get(row, 'work_phone');
+        const vin = get(row, 'vin');
+        const stock = get(row, 'stock_number');
+        const dmsId = get(row, 'dms_deal_id');
+
+        // Skip only fully empty rows (no identifying info at all)
+        if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) continue;
 
         const normEmail = normalizeEmail(email);
-        const normPhone = normalizePhone(phone);
+        const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
         const veh = get(row, 'vehicle');
         const parsed = parseVehicle(veh);
         const { first, last } = splitName(fullName);
         const sd = parseLeadDate(get(row, 'sale_date'));
+        const dActive = parseLeadDate(get(row, 'date_active'));
+        const bday = parseLeadDate(get(row, 'birthday'));
+        const invAcq = parseLeadDate(get(row, 'inventory_acquired_date'));
 
         const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
         const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
-        const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? (front + back);
-        const total = front + back || gross;
+        const totalCol = normalizeRevenue(get(row, 'total_gross'));
+        const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
+        const total = totalCol ?? (front + back) ?? gross;
+        const salePrice = normalizeRevenue(get(row, 'sale_price'));
 
-        // Dedup: prefer deal#/stock#, else identity + date
-        const dealKey = get(row, 'deal_number') || get(row, 'stock_number');
+        // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
+        const dealKey = dmsId || stock || vin;
         const hash = await buildDedupHash({
           email: normEmail,
           phone: normPhone,
@@ -166,6 +178,13 @@ export default function SalesUploadPage() {
           customer_full_name: fullName || null,
           customer_email: email || null,
           customer_phone: phone || null,
+          home_phone: homePhone || null,
+          work_phone: workPhone || null,
+          address: get(row, 'address') || null,
+          city: get(row, 'city') || null,
+          state: get(row, 'state') || null,
+          zip_code: get(row, 'zip_code') || null,
+          birthday: bday ? bday.slice(0, 10) : null,
           normalized_email: normEmail,
           normalized_phone: normPhone,
           dedup_hash: hash,
@@ -173,14 +192,25 @@ export default function SalesUploadPage() {
           vehicle_year: parsed.year,
           vehicle_make: parsed.make,
           vehicle_model: parsed.model,
-          stock_number: get(row, 'stock_number') || null,
-          deal_number: get(row, 'deal_number') || null,
+          vin: vin || null,
+          stock_number: stock || null,
+          deal_number: dmsId || null,
+          dms_deal_id: dmsId || null,
           salesperson: get(row, 'salesperson') || null,
+          fi_manager: get(row, 'fi_manager') || null,
+          up_type: get(row, 'up_type') || null,
+          source_label: get(row, 'source') || null,
+          deal_status: get(row, 'deal_status') || null,
+          profit_loss: get(row, 'profit_loss') || null,
+          new_used: get(row, 'new_used') || null,
           sale_date: sd ?? new Date().toISOString(),
+          date_active: dActive,
+          inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
           gross_revenue: gross,
           front_gross: front,
           back_gross: back,
           total_gross: total,
+          sale_price: salePrice,
           attribution_status: 'unmatched',
         });
       }
