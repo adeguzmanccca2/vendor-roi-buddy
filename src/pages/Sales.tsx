@@ -80,6 +80,16 @@ export default function SalesPage() {
   const [editing, setEditing] = useState<Sale | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [confirmDelete, setConfirmDelete] = useState<{ ids: string[]; label: string } | null>(null);
+  const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const toggleSort = (key: keyof Sale) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
 
   useEffect(() => {
     if (!activeOrgId) return;
