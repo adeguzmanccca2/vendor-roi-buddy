@@ -15,7 +15,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   const adminLinks = [
     { to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true },
-    { to: '/admin/dealerships', label: 'Dealerships', icon: Building2 },
+    { to: '/admin/portal', label: 'Admin Portal', icon: Building2 },
     { to: '/admin/users', label: 'Users', icon: Users },
     { to: '/vendors', label: 'Vendors', icon: Store },
     { to: '/leads', label: 'Leads', icon: ListChecks },
