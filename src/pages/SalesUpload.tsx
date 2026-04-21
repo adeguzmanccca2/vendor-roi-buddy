@@ -268,7 +268,10 @@ export default function SalesUploadPage() {
       setResult({ inserted, duplicates: dupesInBatch + existingDupes, uploadId: upload.id });
       toast.success(`Imported ${inserted} sales (${dupesInBatch + existingDupes} duplicates skipped)`);
     } catch (e: any) {
-      toast.error(e.message ?? 'Import failed');
+      const msg = e?.message ?? 'Import failed';
+      console.error('[SalesUpload] import failed:', e);
+      setImportError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
