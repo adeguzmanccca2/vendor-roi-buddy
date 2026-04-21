@@ -100,6 +100,62 @@ export default function UploadPage() {
 
   const preview = useMemo(() => rows.slice(0, 5), [rows]);
 
+  // Build normalized preview — same logic as ingest, so what you see is what gets saved.
+  const normalizedPreview = useMemo(() => {
+    if (preview.length === 0) return [] as Record<string, any>[];
+    const get = (row: Record<string, string>, key: FieldKey) => {
+      const col = mapping[key];
+      if (!col || col === NONE) return '';
+      return (row[col] ?? '').toString().trim();
+    };
+    const toNum = (s: string): number | null => {
+      if (!s) return null;
+      const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
+      return isNaN(n) ? null : n;
+    };
+    const toInt = (s: string): number | null => {
+      const n = toNum(s);
+      return n === null ? null : Math.round(n);
+    };
+    return preview.map(row => {
+      const fullName = get(row, 'full_name') ||
+        [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
+      const email = get(row, 'email');
+      const phone = get(row, 'phone');
+      const veh = get(row, 'vehicle');
+      const vin = get(row, 'vin');
+      const parsed = parseVehicle(veh);
+      const { first, last } = splitName(fullName);
+      const yearRaw = get(row, 'year');
+      const yearNum = yearRaw ? parseInt(yearRaw, 10) : NaN;
+      return {
+        customer_first_name: first || get(row, 'first_name') || null,
+        customer_last_name: last || get(row, 'last_name') || null,
+        customer_full_name: fullName || null,
+        customer_email: email || null,
+        customer_phone: phone || null,
+        normalized_email: normalizeEmail(email) || null,
+        normalized_phone: normalizePhone(phone) || null,
+        vin: vin || null,
+        vehicle_year: !isNaN(yearNum) ? yearNum : parsed.year,
+        vehicle_make: get(row, 'make') || parsed.make,
+        vehicle_model: get(row, 'model') || parsed.model,
+        vehicle_of_interest: veh || null,
+        vehicle_trim: get(row, 'trim') || null,
+        body_style: get(row, 'body_style') || null,
+        dol: toInt(get(row, 'dol')),
+        last_price: toNum(get(row, 'last_price')),
+        lotlinx_vdp: toInt(get(row, 'lotlinx_vdp')),
+        total_vdp: toInt(get(row, 'total_vdp')),
+        net_new_shoppers: toInt(get(row, 'net_new_shoppers')),
+        pct_sales_opps_since_campaign: toNum(get(row, 'pct_sales_opps')),
+        lead_date: parseLeadDate(get(row, 'lead_date')) ?? '(today — no value found)',
+        source_label: get(row, 'source') || null,
+        lead_status: 'new',
+      };
+    });
+  }, [preview, mapping]);
+
   // Sanity check: warn when name columns contain $ or pure numbers (sign of a misclassified column)
   const nameWarnings = useMemo(() => {
     if (rows.length === 0) return [] as { field: string; column: string; samples: string[]; count: number }[];
