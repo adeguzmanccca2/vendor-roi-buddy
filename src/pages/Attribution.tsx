@@ -127,7 +127,7 @@ export default function AttributionPage() {
   const load = async () => {
     if (!activeOrgId) return;
     setLoading(true);
-    const sinceIso = periodStart(period);
+    const { start: sinceIso, end: untilIso } = periodRange(period);
     const trendSinceIso = new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString();
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
@@ -138,6 +138,7 @@ export default function AttributionPage() {
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
     if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
+    if (untilIso) sQ = sQ.lt('sale_date', untilIso);
 
     const tQ = supabase.from('sales').select('sale_date, total_gross, gross_revenue')
       .eq('organization_id', activeOrgId)
