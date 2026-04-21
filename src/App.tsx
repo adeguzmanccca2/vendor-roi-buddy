@@ -13,6 +13,7 @@ import VendorsPage from '@/pages/Vendors';
 import LeadsPage from '@/pages/Leads';
 import UploadPage from '@/pages/Upload';
 import SalesUploadPage from '@/pages/SalesUpload';
+import SalesPage from '@/pages/Sales';
 import AttributionPage from '@/pages/Attribution';
 import SourceRulesPage from '@/pages/SourceRules';
 import InventoryPage from '@/pages/Inventory';
@@ -67,6 +68,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><UploadPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/sales"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><SalesPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />
