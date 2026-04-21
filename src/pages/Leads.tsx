@@ -252,7 +252,6 @@ export default function LeadsPage() {
     setLeads(prev => prev.map(l => l.id === id ? { ...l, vendor_id: v, manual_override: true } : l));
   };
 
-  const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
   const toggleOne = (id: string, checked: boolean) => {
     setSelected(prev => {
