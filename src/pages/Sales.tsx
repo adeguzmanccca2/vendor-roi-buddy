@@ -369,7 +369,7 @@ export default function SalesPage() {
     );
   }
 
-  const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo);
+  const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo) || vendorFilter !== '__all__';
 
   return (
     <div className="space-y-6">
