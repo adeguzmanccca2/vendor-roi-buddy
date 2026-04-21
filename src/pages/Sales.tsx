@@ -476,13 +476,13 @@ export default function SalesPage() {
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
                       Loading sales...
                     </TableCell>
                   </TableRow>
                 ) : sorted.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
                       {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
                     </TableCell>
                   </TableRow>
