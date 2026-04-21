@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Pencil, Trash2, Upload, Download, Search, X } from 'lucide-react';
+import { Pencil, Trash2, Upload, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 
@@ -67,6 +67,37 @@ const emptyForm = {
   notes: '',
 };
 
+function SortHeader({
+  label,
+  k,
+  sortKey,
+  sortDir,
+  onClick,
+  align = 'left',
+}: {
+  label: string;
+  k: keyof Sale;
+  sortKey: keyof Sale;
+  sortDir: 'asc' | 'desc';
+  onClick: (k: keyof Sale) => void;
+  align?: 'left' | 'right';
+}) {
+  const active = sortKey === k;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead className={align === 'right' ? 'text-right' : ''}>
+      <button
+        type="button"
+        onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'} ${align === 'right' ? 'ml-auto' : ''}`}
+      >
+        {label}
+        <Icon className="h-3 w-3" />
+      </button>
+    </TableHead>
+  );
+}
+
 export default function SalesPage() {
   const { activeOrgId, activeOrg } = useActiveOrg();
   const [sales, setSales] = useState<Sale[]>([]);
@@ -80,6 +111,16 @@ export default function SalesPage() {
   const [editing, setEditing] = useState<Sale | null>(null);
   const [form, setForm] = useState(emptyForm);
   const [confirmDelete, setConfirmDelete] = useState<{ ids: string[]; label: string } | null>(null);
+  const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const toggleSort = (key: keyof Sale) => {
+    if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else {
+      setSortKey(key);
+      setSortDir('asc');
+    }
+  };
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -143,6 +184,24 @@ export default function SalesPage() {
       return true;
     });
   }, [sales, search, vinFilter, nameFilter, dateFrom, dateTo]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (sortKey === 'sale_date') {
+        return (new Date(av as string).getTime() - new Date(bv as string).getTime()) * dir;
+      }
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
 
   const allOnPageSelected = filtered.length > 0 && filtered.every(s => selected.has(s.id));
 
@@ -352,44 +411,45 @@ export default function SalesPage() {
       )}
 
       <Card>
-        <CardContent className="p-0 overflow-x-auto">
-          <Table className="min-w-[1400px]">
-            <TableHeader>
-              <TableRow>
-                <TableHead className="w-10">
-                  <Checkbox
-                    checked={allOnPageSelected}
-                    onCheckedChange={toggleAll}
-                    aria-label="Select all"
-                  />
-                </TableHead>
-                <TableHead>Sale date</TableHead>
-                <TableHead>Customer</TableHead>
-                <TableHead>VIN</TableHead>
-                <TableHead>Vehicle</TableHead>
-                <TableHead>Stock #</TableHead>
-                <TableHead className="text-right">Price</TableHead>
-                <TableHead className="text-right">Total gross</TableHead>
-                <TableHead>Salesperson</TableHead>
-                <TableHead>Status</TableHead>
-                <TableHead className="w-28 text-right">Actions</TableHead>
-              </TableRow>
-            </TableHeader>
-            <TableBody>
-              {loading ? (
+        <CardContent className="p-0">
+          <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto">
+            <Table className="min-w-[1400px]">
+              <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                 <TableRow>
-                  <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
-                    Loading sales...
-                  </TableCell>
+                  <TableHead className="w-10">
+                    <Checkbox
+                      checked={allOnPageSelected}
+                      onCheckedChange={toggleAll}
+                      aria-label="Select all"
+                    />
+                  </TableHead>
+                  <SortHeader label="Sale date" k="sale_date" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="VIN" k="vin" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Vehicle" k="vehicle_make" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Stock #" k="stock_number" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Price" k="sale_price" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
+                  <SortHeader label="Total gross" k="total_gross" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
+                  <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
-              ) : filtered.length === 0 ? (
-                <TableRow>
-                  <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
-                    {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
-                  </TableCell>
-                </TableRow>
-              ) : (
-                filtered.map(sale => (
+              </TableHeader>
+              <TableBody>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                      Loading sales...
+                    </TableCell>
+                  </TableRow>
+                ) : sorted.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
+                      {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  sorted.map(sale => (
                   <TableRow key={sale.id} data-state={selected.has(sale.id) ? 'selected' : undefined}>
                     <TableCell>
                       <Checkbox
@@ -436,9 +496,10 @@ export default function SalesPage() {
                     </TableCell>
                   </TableRow>
                 ))
-              )}
-            </TableBody>
-          </Table>
+                )}
+              </TableBody>
+            </Table>
+          </div>
         </CardContent>
       </Card>
 
