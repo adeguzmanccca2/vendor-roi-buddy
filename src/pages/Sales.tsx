@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Pencil, Trash2, Upload, Download, Search, X } from 'lucide-react';
+import { Pencil, Trash2, Upload, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 
