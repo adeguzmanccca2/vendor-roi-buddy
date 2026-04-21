@@ -342,6 +342,7 @@ export default function SalesPage() {
       total_gross: s.total_gross ?? '',
       salesperson: s.salesperson ?? '',
       source_label: s.source_label ?? '',
+      vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution_status: s.attribution_status,
     }));
     downloadCsv(`sales-${activeOrg?.name ?? 'export'}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
