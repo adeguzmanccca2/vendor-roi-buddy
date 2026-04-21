@@ -154,6 +154,24 @@ export default function SalesPage() {
     });
   }, [sales, search, vinFilter, nameFilter, dateFrom, dateTo]);
 
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    arr.sort((a, b) => {
+      const av = a[sortKey];
+      const bv = b[sortKey];
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (sortKey === 'sale_date') {
+        return (new Date(av as string).getTime() - new Date(bv as string).getTime()) * dir;
+      }
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir]);
+
   const allOnPageSelected = filtered.length > 0 && filtered.every(s => selected.has(s.id));
 
   const toggleAll = () => {
