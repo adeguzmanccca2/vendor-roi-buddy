@@ -78,6 +78,19 @@ export async function buildDedupHash(parts: {
     .join('');
 }
 
+/** Strip currency symbols / commas / parens, return number or null */
+export function normalizeRevenue(input?: string | null): number | null {
+  if (input === null || input === undefined) return null;
+  const raw = String(input).trim();
+  if (!raw) return null;
+  const isNeg = /^\(.*\)$/.test(raw) || raw.includes('-');
+  const cleaned = raw.replace(/[^0-9.]/g, '');
+  if (!cleaned) return null;
+  const n = parseFloat(cleaned);
+  if (isNaN(n)) return null;
+  return isNeg ? -n : n;
+}
+
 /** Best-effort fuzzy column matcher for CSV headers */
 export function guessColumn(headers: string[], candidates: string[]): string | null {
   const lower = headers.map(h => h.toLowerCase().trim());

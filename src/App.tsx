@@ -12,6 +12,8 @@ import AuthPage from '@/pages/Auth';
 import VendorsPage from '@/pages/Vendors';
 import LeadsPage from '@/pages/Leads';
 import UploadPage from '@/pages/Upload';
+import SalesUploadPage from '@/pages/SalesUpload';
+import AttributionPage from '@/pages/Attribution';
 import AdminOverview from '@/pages/admin/AdminOverview';
 import AdminDealerships from '@/pages/admin/AdminDealerships';
 import AdminUsers from '@/pages/admin/AdminUsers';
@@ -60,6 +62,22 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><UploadPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/sales/upload"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><SalesUploadPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/attribution"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><AttributionPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />
