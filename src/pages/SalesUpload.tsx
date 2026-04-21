@@ -243,11 +243,14 @@ export default function SalesUploadPage() {
           return true;
         });
 
-        const CHUNK = 200;
+        const CHUNK = 50;
         for (let i = 0; i < filtered.length; i += CHUNK) {
           const slice = filtered.slice(i, i + CHUNK);
           const { error: insErr } = await supabase.from('sales').insert(slice);
-          if (insErr) throw insErr;
+          if (insErr) {
+            console.error(`[SalesUpload] insert chunk ${i}-${i + slice.length} failed:`, insErr, 'sample row:', slice[0]);
+            throw new Error(`DB rejected sales insert (chunk starting row ${i + 1}): ${insErr.message}${insErr.details ? ' — ' + insErr.details : ''}${insErr.hint ? ' — ' + insErr.hint : ''}`);
+          }
           inserted += slice.length;
         }
       }
