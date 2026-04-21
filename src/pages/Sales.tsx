@@ -271,6 +271,7 @@ export default function SalesPage() {
       total_gross: sale.total_gross != null ? String(sale.total_gross) : '',
       salesperson: sale.salesperson ?? '',
       source_label: sale.source_label ?? '',
+      vendor_id: sale.vendor_id ?? '',
       notes: sale.notes ?? '',
     });
   };
