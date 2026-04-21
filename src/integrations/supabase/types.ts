@@ -374,103 +374,157 @@ export type Database = {
       }
       sales: {
         Row: {
+          address: string | null
           attribution_confidence: number | null
           attribution_status: string
           back_gross: number | null
+          birthday: string | null
+          city: string | null
           created_at: string
           customer_email: string | null
           customer_first_name: string | null
           customer_full_name: string | null
           customer_last_name: string | null
           customer_phone: string | null
+          date_active: string | null
           deal_number: string | null
+          deal_status: string | null
           dedup_hash: string | null
+          dms_deal_id: string | null
+          fi_manager: string | null
           front_gross: number | null
           gross_revenue: number | null
+          home_phone: string | null
           id: string
+          inventory_acquired_date: string | null
           lead_id: string | null
           manual_override: boolean
+          new_used: string | null
           normalized_email: string | null
           normalized_phone: string | null
           notes: string | null
           organization_id: string
+          profit_loss: string | null
           raw_upload_id: string | null
           sale_date: string | null
+          sale_price: number | null
           salesperson: string | null
+          source_label: string | null
+          state: string | null
           stock_number: string | null
           total_gross: number | null
+          up_type: string | null
           updated_at: string
           vehicle_make: string | null
           vehicle_model: string | null
           vehicle_of_interest: string | null
           vehicle_year: number | null
           vendor_id: string | null
+          vin: string | null
+          work_phone: string | null
+          zip_code: string | null
         }
         Insert: {
+          address?: string | null
           attribution_confidence?: number | null
           attribution_status?: string
           back_gross?: number | null
+          birthday?: string | null
+          city?: string | null
           created_at?: string
           customer_email?: string | null
           customer_first_name?: string | null
           customer_full_name?: string | null
           customer_last_name?: string | null
           customer_phone?: string | null
+          date_active?: string | null
           deal_number?: string | null
+          deal_status?: string | null
           dedup_hash?: string | null
+          dms_deal_id?: string | null
+          fi_manager?: string | null
           front_gross?: number | null
           gross_revenue?: number | null
+          home_phone?: string | null
           id?: string
+          inventory_acquired_date?: string | null
           lead_id?: string | null
           manual_override?: boolean
+          new_used?: string | null
           normalized_email?: string | null
           normalized_phone?: string | null
           notes?: string | null
           organization_id: string
+          profit_loss?: string | null
           raw_upload_id?: string | null
           sale_date?: string | null
+          sale_price?: number | null
           salesperson?: string | null
+          source_label?: string | null
+          state?: string | null
           stock_number?: string | null
           total_gross?: number | null
+          up_type?: string | null
           updated_at?: string
           vehicle_make?: string | null
           vehicle_model?: string | null
           vehicle_of_interest?: string | null
           vehicle_year?: number | null
           vendor_id?: string | null
+          vin?: string | null
+          work_phone?: string | null
+          zip_code?: string | null
         }
         Update: {
+          address?: string | null
           attribution_confidence?: number | null
           attribution_status?: string
           back_gross?: number | null
+          birthday?: string | null
+          city?: string | null
           created_at?: string
           customer_email?: string | null
           customer_first_name?: string | null
           customer_full_name?: string | null
           customer_last_name?: string | null
           customer_phone?: string | null
+          date_active?: string | null
           deal_number?: string | null
+          deal_status?: string | null
           dedup_hash?: string | null
+          dms_deal_id?: string | null
+          fi_manager?: string | null
           front_gross?: number | null
           gross_revenue?: number | null
+          home_phone?: string | null
           id?: string
+          inventory_acquired_date?: string | null
           lead_id?: string | null
           manual_override?: boolean
+          new_used?: string | null
           normalized_email?: string | null
           normalized_phone?: string | null
           notes?: string | null
           organization_id?: string
+          profit_loss?: string | null
           raw_upload_id?: string | null
           sale_date?: string | null
+          sale_price?: number | null
           salesperson?: string | null
+          source_label?: string | null
+          state?: string | null
           stock_number?: string | null
           total_gross?: number | null
+          up_type?: string | null
           updated_at?: string
           vehicle_make?: string | null
           vehicle_model?: string | null
           vehicle_of_interest?: string | null
           vehicle_year?: number | null
           vendor_id?: string | null
+          vin?: string | null
+          work_phone?: string | null
+          zip_code?: string | null
         }
         Relationships: [
           {
