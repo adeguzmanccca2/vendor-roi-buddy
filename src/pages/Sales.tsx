@@ -278,6 +278,8 @@ export default function SalesPage() {
 
   const saveEdit = async () => {
     if (!editing) return;
+    const newVendorId = form.vendor_id ? form.vendor_id : null;
+    const vendorChanged = (editing.vendor_id ?? null) !== newVendorId;
     const payload: any = {
       customer_full_name: form.customer_full_name || null,
       customer_email: form.customer_email || null,
@@ -294,9 +296,24 @@ export default function SalesPage() {
       total_gross: form.total_gross ? Number(form.total_gross) : null,
       salesperson: form.salesperson || null,
       source_label: form.source_label || null,
+      vendor_id: newVendorId,
       notes: form.notes || null,
       manual_override: true,
     };
+    // If user manually picked/cleared a vendor, lock attribution as manual so re-runs don't overwrite.
+    if (vendorChanged) {
+      payload.attribution_status = newVendorId ? 'manual' : 'none';
+      payload.attribution_confidence = 100;
+    }
+    const { error } = await supabase.from('sales').update(payload).eq('id', editing.id);
+    if (error) {
+      toast.error('Update failed', { description: error.message });
+      return;
+    }
+    toast.success('Sale updated');
+    setEditing(null);
+    void load();
+  };
     const { error } = await supabase.from('sales').update(payload).eq('id', editing.id);
     if (error) {
       toast.error('Update failed', { description: error.message });
