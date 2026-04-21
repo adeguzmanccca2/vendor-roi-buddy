@@ -71,6 +71,7 @@ const emptyForm = {
   total_gross: '',
   salesperson: '',
   source_label: '',
+  vendor_id: '',
   notes: '',
 };
 
