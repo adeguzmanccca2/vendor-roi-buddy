@@ -140,8 +140,19 @@ export default function SalesPage() {
   useEffect(() => {
     if (!activeOrgId) return;
     void load();
+    void loadVendors();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId]);
+
+  async function loadVendors() {
+    if (!activeOrgId) return;
+    const { data, error } = await supabase
+      .from('vendors')
+      .select('id, name')
+      .eq('organization_id', activeOrgId)
+      .order('name');
+    if (!error) setVendorList((data ?? []) as VendorOption[]);
+  }
 
   async function load() {
     if (!activeOrgId) return;
@@ -149,7 +160,7 @@ export default function SalesPage() {
     const { data, error } = await supabase
       .from('sales')
       .select(
-        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, notes',
+        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, vendor_id, notes',
       )
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false, nullsFirst: false })
