@@ -109,6 +109,7 @@ function SortHeader({
 export default function SalesPage() {
   const { activeOrgId, activeOrg } = useActiveOrg();
   const [sales, setSales] = useState<Sale[]>([]);
+  const [vendorList, setVendorList] = useState<VendorOption[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [vinFilter, setVinFilter] = useState('');
@@ -121,6 +122,12 @@ export default function SalesPage() {
   const [confirmDelete, setConfirmDelete] = useState<{ ids: string[]; label: string } | null>(null);
   const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
+  const vendorMap = useMemo(() => {
+    const m = new Map<string, string>();
+    vendorList.forEach(v => m.set(v.id, v.name));
+    return m;
+  }, [vendorList]);
 
   const toggleSort = (key: keyof Sale) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
