@@ -368,6 +368,13 @@ export default function LeadsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={filtered.length > 0 && filtered.every(l => selected.has(l.id))}
+                        onCheckedChange={(c) => toggleAll(!!c)}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Customer</TableHead>
                     <TableHead>Contact</TableHead>
@@ -379,7 +386,14 @@ export default function LeadsPage() {
                 </TableHeader>
                 <TableBody>
                   {filtered.map(l => (
-                    <TableRow key={l.id}>
+                    <TableRow key={l.id} data-state={selected.has(l.id) ? 'selected' : undefined}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selected.has(l.id)}
+                          onCheckedChange={(c) => toggleOne(l.id, !!c)}
+                          aria-label={`Select lead ${l.customer_full_name ?? ''}`}
+                        />
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
                       </TableCell>
@@ -410,9 +424,32 @@ export default function LeadsPage() {
                         </Select>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(l)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(l)} aria-label="Edit lead">
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="sm" aria-label="Delete lead">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Permanently removes {l.customer_full_name ?? 'this lead'}. Any sales attributed to it will be unlinked.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => deleteOne(l.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
