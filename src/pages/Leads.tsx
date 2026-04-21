@@ -93,18 +93,30 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState({ vendor: 'all', status: 'all', search: '' });
+  const [filter, setFilter] = useState({ vendor: 'all', status: 'all', search: '', vin: '' });
+  const [sortKey, setSortKey] = useState<SortKey>('lead_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
 
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(k); setSortDir('asc'); }
+  };
+
   const load = async () => {
     if (!activeOrgId) { setLeads([]); setVendors([]); setLoading(false); return; }
     setLoading(true);
     const [{ data: l }, { data: v }] = await Promise.all([
-      supabase.from('leads').select('*').eq('organization_id', activeOrgId).order('lead_date', { ascending: false, nullsFirst: false }).limit(500),
+      supabase
+        .from('leads')
+        .select('id, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label')
+        .eq('organization_id', activeOrgId)
+        .order('lead_date', { ascending: false, nullsFirst: false })
+        .limit(1000),
       supabase.from('vendors').select('id, name, is_active').eq('organization_id', activeOrgId).order('name'),
     ]);
     setLeads((l ?? []) as Lead[]);
@@ -114,19 +126,54 @@ export default function LeadsPage() {
 
   useEffect(() => { load(); }, [activeOrgId]);
 
-  const filtered = leads.filter(l => {
-    if (filter.vendor !== 'all') {
-      if (filter.vendor === 'unassigned' && l.vendor_id) return false;
-      if (filter.vendor !== 'unassigned' && l.vendor_id !== filter.vendor) return false;
-    }
-    if (filter.status !== 'all' && l.lead_status !== filter.status) return false;
-    if (filter.search) {
-      const q = filter.search.toLowerCase();
-      const hay = `${l.customer_full_name ?? ''} ${l.customer_email ?? ''} ${l.customer_phone ?? ''} ${l.vehicle_of_interest ?? ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const vehicleStr = (l: Lead) =>
+    [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || l.vehicle_of_interest || '';
+
+  const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
+
+  const filtered = useMemo(() => {
+    const vinQ = filter.vin.trim().toLowerCase();
+    const q = filter.search.trim().toLowerCase();
+    return leads.filter(l => {
+      if (filter.vendor !== 'all') {
+        if (filter.vendor === 'unassigned' && l.vendor_id) return false;
+        if (filter.vendor !== 'unassigned' && l.vendor_id !== filter.vendor) return false;
+      }
+      if (filter.status !== 'all' && l.lead_status !== filter.status) return false;
+      if (vinQ && !(l.vin ?? '').toLowerCase().includes(vinQ)) return false;
+      if (q) {
+        const hay = `${l.customer_full_name ?? ''} ${l.customer_email ?? ''} ${l.customer_phone ?? ''} ${l.vehicle_of_interest ?? ''} ${l.vin ?? ''} ${vendorName(l.vendor_id)} ${l.source_label ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [leads, filter, vendors]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const getVal = (l: Lead): string | number | null => {
+      switch (sortKey) {
+        case 'lead_date': return l.lead_date ? new Date(l.lead_date).getTime() : null;
+        case 'customer_full_name': return l.customer_full_name;
+        case 'customer_email': return l.customer_email;
+        case 'vin': return l.vin;
+        case 'vehicle': return vehicleStr(l) || null;
+        case 'vendor': return vendorName(l.vendor_id);
+        case 'lead_status': return l.lead_status;
+      }
+    };
+    arr.sort((a, b) => {
+      const av = getVal(a); const bv = getVal(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir, vendors]);
+
 
   const openNew = () => { setEditing(null); setForm({ ...emptyForm }); setOpen(true); };
 
