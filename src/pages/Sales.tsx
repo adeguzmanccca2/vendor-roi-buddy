@@ -613,6 +613,21 @@ export default function SalesPage() {
               <Label>Source</Label>
               <Input value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} />
             </div>
+            <div>
+              <Label>Vendor</Label>
+              <Select
+                value={form.vendor_id || NO_VENDOR}
+                onValueChange={v => setForm({ ...form, vendor_id: v === NO_VENDOR ? '' : v })}
+              >
+                <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value={NO_VENDOR}>— None —</SelectItem>
+                  {vendorList.map(v => (
+                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
             <div className="md:col-span-2">
               <Label>Notes</Label>
               <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
