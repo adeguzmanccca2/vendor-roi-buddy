@@ -231,6 +231,7 @@ export default function SalesUploadPage() {
       }
 
       console.log(`[SalesUpload] prepared ${toInsert.length} rows, ${rowErrors.length} skipped`);
+      setRowSkips(rowErrors);
 
       let existingDupes = 0;
       let inserted = 0;
