@@ -368,6 +368,31 @@ export default function SalesUploadPage() {
             </CardContent>
           </Card>
 
+          {importError && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Import failed</AlertTitle>
+              <AlertDescription className="break-words text-xs font-mono mt-2">
+                {importError}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {rowSkips.length > 0 && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{rowSkips.length} row(s) skipped during processing</AlertTitle>
+              <AlertDescription className="text-xs mt-2 max-h-40 overflow-y-auto">
+                <ul className="space-y-0.5">
+                  {rowSkips.slice(0, 20).map(s => (
+                    <li key={s.row}>Row {s.row}: {s.reason}</li>
+                  ))}
+                  {rowSkips.length > 20 && <li>…and {rowSkips.length - 20} more (see browser console)</li>}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex items-center justify-between gap-3">
             {result && (
               <div className="text-sm">
