@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import {
   buildDedupHash,
   guessColumn,
+  looksNonHuman,
   normalizeEmail,
   normalizeName,
   normalizePhone,
@@ -21,6 +22,8 @@ import {
   parseVehicle,
   splitName,
 } from '@/lib/normalize';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
 
 interface Vendor { id: string; name: string }
 
@@ -96,6 +99,31 @@ export default function UploadPage() {
   };
 
   const preview = useMemo(() => rows.slice(0, 5), [rows]);
+
+  // Sanity check: warn when name columns contain $ or pure numbers (sign of a misclassified column)
+  const nameWarnings = useMemo(() => {
+    if (rows.length === 0) return [] as { field: string; column: string; samples: string[]; count: number }[];
+    const fieldsToCheck: { key: FieldKey; label: string }[] = [
+      { key: 'first_name', label: 'First name' },
+      { key: 'last_name', label: 'Last name' },
+      { key: 'full_name', label: 'Full name' },
+    ];
+    const sample = rows.slice(0, 50);
+    const out: { field: string; column: string; samples: string[]; count: number }[] = [];
+    for (const f of fieldsToCheck) {
+      const col = mapping[f.key];
+      if (!col || col === NONE) continue;
+      const bad: string[] = [];
+      for (const r of sample) {
+        const v = (r[col] ?? '').toString().trim();
+        if (looksNonHuman(v)) bad.push(v);
+      }
+      if (bad.length > 0) {
+        out.push({ field: f.label, column: col, samples: Array.from(new Set(bad)).slice(0, 3), count: bad.length });
+      }
+    }
+    return out;
+  }, [rows, mapping]);
 
   const ingest = async () => {
     if (!activeOrgId || !user || !file) return;
@@ -324,6 +352,24 @@ export default function UploadPage() {
             </CardContent>
           </Card>
 
+          {nameWarnings.length > 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Name column may be misclassified</AlertTitle>
+              <AlertDescription>
+                <ul className="mt-2 list-disc pl-5 space-y-1 text-sm">
+                  {nameWarnings.map(w => (
+                    <li key={w.field}>
+                      <strong>{w.field}</strong> is mapped to column <code className="px-1 rounded bg-muted">{w.column}</code> —
+                      found {w.count} value(s) with $ or pure numbers (e.g. {w.samples.map(s => `"${s}"`).join(', ')}).
+                      This usually means the column contains a price or count, not a person's name. Re-map or set to “Skip”.
+                    </li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
+
           <div className="flex items-center justify-between gap-3">
             {result && (
               <div className="text-sm">
@@ -331,7 +377,19 @@ export default function UploadPage() {
                 <Badge variant="secondary">{result.duplicates} duplicates skipped</Badge>
               </div>
             )}
-            <Button onClick={ingest} disabled={busy} className="ml-auto">
+            <Button
+              onClick={() => {
+                if (nameWarnings.length > 0) {
+                  const ok = window.confirm(
+                    `Heads up — name columns look misclassified (${nameWarnings.map(w => w.field).join(', ')}). Import anyway?`
+                  );
+                  if (!ok) return;
+                }
+                ingest();
+              }}
+              disabled={busy}
+              className="ml-auto"
+            >
               <UploadIcon className="mr-1 h-4 w-4" />
               {busy ? 'Importing...' : `Import ${rows.length} rows`}
             </Button>
