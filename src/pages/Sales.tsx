@@ -46,8 +46,14 @@ interface Sale {
   salesperson: string | null;
   source_label: string | null;
   attribution_status: string;
+  vendor_id: string | null;
   notes: string | null;
 }
+
+interface VendorOption { id: string; name: string }
+
+const NO_VENDOR = '__none__';
+
 
 const emptyForm = {
   customer_full_name: '',
