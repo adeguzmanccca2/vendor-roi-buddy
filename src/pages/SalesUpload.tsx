@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Upload as UploadIcon, FileSpreadsheet, Wand2 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Upload as UploadIcon, FileSpreadsheet, Wand2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   buildDedupHash,
@@ -71,6 +72,8 @@ export default function SalesUploadPage() {
   const [busy, setBusy] = useState(false);
   const [attributing, setAttributing] = useState(false);
   const [result, setResult] = useState<{ inserted: number; duplicates: number; uploadId: string } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [rowSkips, setRowSkips] = useState<{ row: number; reason: string }[]>([]);
 
   const onFile = (f: File | null) => {
     setFile(f);
@@ -103,6 +106,8 @@ export default function SalesUploadPage() {
     if (!activeOrgId || !user || !file) return;
     if (rows.length === 0) return toast.error('No rows to import');
     setBusy(true);
+    setImportError(null);
+    setRowSkips([]);
     try {
       const { data: upload, error: upErr } = await supabase
         .from('raw_sales_uploads')
@@ -128,92 +133,106 @@ export default function SalesUploadPage() {
       const toInsert: any[] = [];
       let dupesInBatch = 0;
 
-      for (const row of rows) {
-        const fullName = get(row, 'full_name') ||
-          [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
-        const email = get(row, 'email');
-        const phone = get(row, 'phone');
-        const homePhone = get(row, 'home_phone');
-        const workPhone = get(row, 'work_phone');
-        const vin = get(row, 'vin');
-        const stock = get(row, 'stock_number');
-        const dmsId = get(row, 'dms_deal_id');
+      const rowErrors: { row: number; reason: string }[] = [];
 
-        // Skip only fully empty rows (no identifying info at all)
-        if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) continue;
+      for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
+        const row = rows[rowIdx];
+        try {
+          const fullName = get(row, 'full_name') ||
+            [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
+          const email = get(row, 'email');
+          const phone = get(row, 'phone');
+          const homePhone = get(row, 'home_phone');
+          const workPhone = get(row, 'work_phone');
+          const vin = get(row, 'vin');
+          const stock = get(row, 'stock_number');
+          const dmsId = get(row, 'dms_deal_id');
 
-        const normEmail = normalizeEmail(email);
-        const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
-        const veh = get(row, 'vehicle');
-        const parsed = parseVehicle(veh);
-        const { first, last } = splitName(fullName);
-        const sd = parseLeadDate(get(row, 'sale_date'));
-        const dActive = parseLeadDate(get(row, 'date_active'));
-        const bday = parseLeadDate(get(row, 'birthday'));
-        const invAcq = parseLeadDate(get(row, 'inventory_acquired_date'));
+          // Skip only fully empty rows (no identifying info at all)
+          if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) {
+            rowErrors.push({ row: rowIdx + 2, reason: 'no identifying info' });
+            continue;
+          }
 
-        const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
-        const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
-        const totalCol = normalizeRevenue(get(row, 'total_gross'));
-        const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
-        const total = totalCol ?? ((front + back) || gross);
-        const salePrice = normalizeRevenue(get(row, 'sale_price'));
+          const normEmail = normalizeEmail(email);
+          const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
+          const veh = get(row, 'vehicle');
+          const parsed = parseVehicle(veh);
+          const { first, last } = splitName(fullName);
+          const sd = parseLeadDate(get(row, 'sale_date'));
+          const dActive = parseLeadDate(get(row, 'date_active'));
+          const bday = parseLeadDate(get(row, 'birthday'));
+          const invAcq = parseLeadDate(get(row, 'inventory_acquired_date'));
 
-        // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
-        const dealKey = dmsId || stock || vin;
-        const hash = await buildDedupHash({
-          email: normEmail,
-          phone: normPhone,
-          name: normalizeName(fullName) + '|' + (sd ?? ''),
-          vehicle: normalizeName(veh) + '|' + dealKey,
-        });
-        if (seenHashes.has(hash)) { dupesInBatch++; continue; }
-        seenHashes.add(hash);
+          const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
+          const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
+          const totalCol = normalizeRevenue(get(row, 'total_gross'));
+          const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
+          const total = totalCol ?? ((front + back) || gross);
+          const salePrice = normalizeRevenue(get(row, 'sale_price'));
 
-        toInsert.push({
-          organization_id: activeOrgId,
-          raw_upload_id: upload.id,
-          customer_first_name: first || get(row, 'first_name') || null,
-          customer_last_name: last || get(row, 'last_name') || null,
-          customer_full_name: fullName || null,
-          customer_email: email || null,
-          customer_phone: phone || null,
-          home_phone: homePhone || null,
-          work_phone: workPhone || null,
-          address: get(row, 'address') || null,
-          city: get(row, 'city') || null,
-          state: get(row, 'state') || null,
-          zip_code: get(row, 'zip_code') || null,
-          birthday: bday ? bday.slice(0, 10) : null,
-          normalized_email: normEmail,
-          normalized_phone: normPhone,
-          dedup_hash: hash,
-          vehicle_of_interest: veh || null,
-          vehicle_year: parsed.year,
-          vehicle_make: parsed.make,
-          vehicle_model: parsed.model,
-          vin: vin || null,
-          stock_number: stock || null,
-          deal_number: dmsId || null,
-          dms_deal_id: dmsId || null,
-          salesperson: get(row, 'salesperson') || null,
-          fi_manager: get(row, 'fi_manager') || null,
-          up_type: get(row, 'up_type') || null,
-          source_label: get(row, 'source') || null,
-          deal_status: get(row, 'deal_status') || null,
-          profit_loss: get(row, 'profit_loss') || null,
-          new_used: get(row, 'new_used') || null,
-          sale_date: sd ?? new Date().toISOString(),
-          date_active: dActive,
-          inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
-          gross_revenue: gross,
-          front_gross: front,
-          back_gross: back,
-          total_gross: total,
-          sale_price: salePrice,
-          attribution_status: 'unmatched',
-        });
+          // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
+          const dealKey = dmsId || stock || vin;
+          const hash = await buildDedupHash({
+            email: normEmail,
+            phone: normPhone,
+            name: normalizeName(fullName) + '|' + (sd ?? ''),
+            vehicle: normalizeName(veh) + '|' + dealKey,
+          });
+          if (seenHashes.has(hash)) { dupesInBatch++; continue; }
+          seenHashes.add(hash);
+
+          toInsert.push({
+            organization_id: activeOrgId,
+            raw_upload_id: upload.id,
+            customer_first_name: first || get(row, 'first_name') || null,
+            customer_last_name: last || get(row, 'last_name') || null,
+            customer_full_name: fullName || null,
+            customer_email: email || null,
+            customer_phone: phone || null,
+            home_phone: homePhone || null,
+            work_phone: workPhone || null,
+            address: get(row, 'address') || null,
+            city: get(row, 'city') || null,
+            state: get(row, 'state') || null,
+            zip_code: get(row, 'zip_code') || null,
+            birthday: bday ? bday.slice(0, 10) : null,
+            normalized_email: normEmail,
+            normalized_phone: normPhone,
+            dedup_hash: hash,
+            vehicle_of_interest: veh || null,
+            vehicle_year: parsed.year,
+            vehicle_make: parsed.make,
+            vehicle_model: parsed.model,
+            vin: vin || null,
+            stock_number: stock || null,
+            deal_number: dmsId || null,
+            dms_deal_id: dmsId || null,
+            salesperson: get(row, 'salesperson') || null,
+            fi_manager: get(row, 'fi_manager') || null,
+            up_type: get(row, 'up_type') || null,
+            source_label: get(row, 'source') || null,
+            deal_status: get(row, 'deal_status') || null,
+            profit_loss: get(row, 'profit_loss') || null,
+            new_used: get(row, 'new_used') || null,
+            sale_date: sd ?? new Date().toISOString(),
+            date_active: dActive,
+            inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
+            gross_revenue: gross,
+            front_gross: front,
+            back_gross: back,
+            total_gross: total,
+            sale_price: salePrice,
+            attribution_status: 'unmatched',
+          });
+        } catch (rowErr: any) {
+          console.error(`[SalesUpload] row ${rowIdx + 2} failed:`, rowErr, row);
+          rowErrors.push({ row: rowIdx + 2, reason: rowErr?.message ?? String(rowErr) });
+        }
       }
+
+      console.log(`[SalesUpload] prepared ${toInsert.length} rows, ${rowErrors.length} skipped`);
+      setRowSkips(rowErrors);
 
       let existingDupes = 0;
       let inserted = 0;
@@ -230,11 +249,14 @@ export default function SalesUploadPage() {
           return true;
         });
 
-        const CHUNK = 200;
+        const CHUNK = 50;
         for (let i = 0; i < filtered.length; i += CHUNK) {
           const slice = filtered.slice(i, i + CHUNK);
           const { error: insErr } = await supabase.from('sales').insert(slice);
-          if (insErr) throw insErr;
+          if (insErr) {
+            console.error(`[SalesUpload] insert chunk ${i}-${i + slice.length} failed:`, insErr, 'sample row:', slice[0]);
+            throw new Error(`DB rejected sales insert (chunk starting row ${i + 1}): ${insErr.message}${insErr.details ? ' — ' + insErr.details : ''}${insErr.hint ? ' — ' + insErr.hint : ''}`);
+          }
           inserted += slice.length;
         }
       }
@@ -247,7 +269,10 @@ export default function SalesUploadPage() {
       setResult({ inserted, duplicates: dupesInBatch + existingDupes, uploadId: upload.id });
       toast.success(`Imported ${inserted} sales (${dupesInBatch + existingDupes} duplicates skipped)`);
     } catch (e: any) {
-      toast.error(e.message ?? 'Import failed');
+      const msg = e?.message ?? 'Import failed';
+      console.error('[SalesUpload] import failed:', e);
+      setImportError(msg);
+      toast.error(msg);
     } finally {
       setBusy(false);
     }
@@ -342,6 +367,31 @@ export default function SalesUploadPage() {
               </table>
             </CardContent>
           </Card>
+
+          {importError && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Import failed</AlertTitle>
+              <AlertDescription className="break-words text-xs font-mono mt-2">
+                {importError}
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {rowSkips.length > 0 && (
+            <Alert>
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>{rowSkips.length} row(s) skipped during processing</AlertTitle>
+              <AlertDescription className="text-xs mt-2 max-h-40 overflow-y-auto">
+                <ul className="space-y-0.5">
+                  {rowSkips.slice(0, 20).map(s => (
+                    <li key={s.row}>Row {s.row}: {s.reason}</li>
+                  ))}
+                  {rowSkips.length > 20 && <li>…and {rowSkips.length - 20} more (see browser console)</li>}
+                </ul>
+              </AlertDescription>
+            </Alert>
+          )}
 
           <div className="flex items-center justify-between gap-3">
             {result && (
