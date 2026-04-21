@@ -215,7 +215,7 @@ export default function SalesPage() {
       }
       return true;
     });
-  }, [sales, search, vinFilter, nameFilter, dateFrom, dateTo]);
+  }, [sales, search, vinFilter, nameFilter, dateFrom, dateTo, vendorFilter]);
 
   const sorted = useMemo(() => {
     const arr = [...filtered];
