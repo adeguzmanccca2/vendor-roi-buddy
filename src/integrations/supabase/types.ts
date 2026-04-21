@@ -232,6 +232,183 @@ export type Database = {
           },
         ]
       }
+      raw_sales_uploads: {
+        Row: {
+          attributed_count: number
+          column_mapping: Json | null
+          created_at: string
+          duplicate_count: number
+          filename: string | null
+          id: string
+          inserted_count: number
+          notes: string | null
+          organization_id: string
+          raw_rows: Json | null
+          row_count: number
+          uploaded_by: string
+        }
+        Insert: {
+          attributed_count?: number
+          column_mapping?: Json | null
+          created_at?: string
+          duplicate_count?: number
+          filename?: string | null
+          id?: string
+          inserted_count?: number
+          notes?: string | null
+          organization_id: string
+          raw_rows?: Json | null
+          row_count?: number
+          uploaded_by: string
+        }
+        Update: {
+          attributed_count?: number
+          column_mapping?: Json | null
+          created_at?: string
+          duplicate_count?: number
+          filename?: string | null
+          id?: string
+          inserted_count?: number
+          notes?: string | null
+          organization_id?: string
+          raw_rows?: Json | null
+          row_count?: number
+          uploaded_by?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "raw_sales_uploads_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      sales: {
+        Row: {
+          attribution_confidence: number | null
+          attribution_status: string
+          back_gross: number | null
+          created_at: string
+          customer_email: string | null
+          customer_first_name: string | null
+          customer_full_name: string | null
+          customer_last_name: string | null
+          customer_phone: string | null
+          deal_number: string | null
+          dedup_hash: string | null
+          front_gross: number | null
+          gross_revenue: number | null
+          id: string
+          lead_id: string | null
+          manual_override: boolean
+          normalized_email: string | null
+          normalized_phone: string | null
+          notes: string | null
+          organization_id: string
+          raw_upload_id: string | null
+          sale_date: string | null
+          salesperson: string | null
+          stock_number: string | null
+          total_gross: number | null
+          updated_at: string
+          vehicle_make: string | null
+          vehicle_model: string | null
+          vehicle_of_interest: string | null
+          vehicle_year: number | null
+          vendor_id: string | null
+        }
+        Insert: {
+          attribution_confidence?: number | null
+          attribution_status?: string
+          back_gross?: number | null
+          created_at?: string
+          customer_email?: string | null
+          customer_first_name?: string | null
+          customer_full_name?: string | null
+          customer_last_name?: string | null
+          customer_phone?: string | null
+          deal_number?: string | null
+          dedup_hash?: string | null
+          front_gross?: number | null
+          gross_revenue?: number | null
+          id?: string
+          lead_id?: string | null
+          manual_override?: boolean
+          normalized_email?: string | null
+          normalized_phone?: string | null
+          notes?: string | null
+          organization_id: string
+          raw_upload_id?: string | null
+          sale_date?: string | null
+          salesperson?: string | null
+          stock_number?: string | null
+          total_gross?: number | null
+          updated_at?: string
+          vehicle_make?: string | null
+          vehicle_model?: string | null
+          vehicle_of_interest?: string | null
+          vehicle_year?: number | null
+          vendor_id?: string | null
+        }
+        Update: {
+          attribution_confidence?: number | null
+          attribution_status?: string
+          back_gross?: number | null
+          created_at?: string
+          customer_email?: string | null
+          customer_first_name?: string | null
+          customer_full_name?: string | null
+          customer_last_name?: string | null
+          customer_phone?: string | null
+          deal_number?: string | null
+          dedup_hash?: string | null
+          front_gross?: number | null
+          gross_revenue?: number | null
+          id?: string
+          lead_id?: string | null
+          manual_override?: boolean
+          normalized_email?: string | null
+          normalized_phone?: string | null
+          notes?: string | null
+          organization_id?: string
+          raw_upload_id?: string | null
+          sale_date?: string | null
+          salesperson?: string | null
+          stock_number?: string | null
+          total_gross?: number | null
+          updated_at?: string
+          vehicle_make?: string | null
+          vehicle_model?: string | null
+          vehicle_of_interest?: string | null
+          vehicle_year?: number | null
+          vendor_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "sales_lead_id_fkey"
+            columns: ["lead_id"]
+            isOneToOne: false
+            referencedRelation: "leads"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "sales_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -322,6 +499,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      attribute_sales_for_org: {
+        Args: { _org_id: string }
+        Returns: {
+          matched: number
+          total_unmatched: number
+        }[]
+      }
       get_user_org: { Args: { _user_id: string }; Returns: string }
       has_role: {
         Args: {
