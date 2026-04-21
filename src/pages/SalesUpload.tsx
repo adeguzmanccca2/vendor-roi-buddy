@@ -9,7 +9,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
-import { Upload as UploadIcon, FileSpreadsheet, Wand2 } from 'lucide-react';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { Upload as UploadIcon, FileSpreadsheet, Wand2, AlertTriangle } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   buildDedupHash,
