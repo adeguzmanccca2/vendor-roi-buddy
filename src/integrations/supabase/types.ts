@@ -172,6 +172,66 @@ export type Database = {
           },
         ]
       }
+      raw_inventory_uploads: {
+        Row: {
+          column_mapping: Json | null
+          created_at: string
+          filename: string | null
+          id: string
+          inserted_count: number
+          notes: string | null
+          organization_id: string
+          raw_rows: Json | null
+          row_count: number
+          updated_count: number
+          uploaded_by: string
+          vendor_id: string
+        }
+        Insert: {
+          column_mapping?: Json | null
+          created_at?: string
+          filename?: string | null
+          id?: string
+          inserted_count?: number
+          notes?: string | null
+          organization_id: string
+          raw_rows?: Json | null
+          row_count?: number
+          updated_count?: number
+          uploaded_by: string
+          vendor_id: string
+        }
+        Update: {
+          column_mapping?: Json | null
+          created_at?: string
+          filename?: string | null
+          id?: string
+          inserted_count?: number
+          notes?: string | null
+          organization_id?: string
+          raw_rows?: Json | null
+          row_count?: number
+          updated_count?: number
+          uploaded_by?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "raw_inventory_uploads_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "raw_inventory_uploads_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       raw_lead_uploads: {
         Row: {
           column_mapping: Json | null
@@ -409,6 +469,60 @@ export type Database = {
           },
         ]
       }
+      source_mapping_rules: {
+        Row: {
+          created_at: string
+          id: string
+          is_active: boolean
+          match_type: string
+          notes: string | null
+          organization_id: string
+          pattern: string
+          priority: number
+          updated_at: string
+          vendor_id: string
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          match_type?: string
+          notes?: string | null
+          organization_id: string
+          pattern: string
+          priority?: number
+          updated_at?: string
+          vendor_id: string
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          match_type?: string
+          notes?: string | null
+          organization_id?: string
+          pattern?: string
+          priority?: number
+          updated_at?: string
+          vendor_id?: string
+        }
+        Relationships: [
+          {
+            foreignKeyName: "source_mapping_rules_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "source_mapping_rules_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -437,6 +551,84 @@ export type Database = {
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vendor_inventory: {
+        Row: {
+          created_at: string
+          id: string
+          listed_at: string | null
+          mileage: number | null
+          notes: string | null
+          organization_id: string
+          price: number | null
+          raw_upload_id: string | null
+          removed_at: string | null
+          status: string
+          stock_number: string | null
+          updated_at: string
+          vehicle_make: string | null
+          vehicle_model: string | null
+          vehicle_trim: string | null
+          vehicle_year: number | null
+          vendor_id: string
+          vin: string | null
+        }
+        Insert: {
+          created_at?: string
+          id?: string
+          listed_at?: string | null
+          mileage?: number | null
+          notes?: string | null
+          organization_id: string
+          price?: number | null
+          raw_upload_id?: string | null
+          removed_at?: string | null
+          status?: string
+          stock_number?: string | null
+          updated_at?: string
+          vehicle_make?: string | null
+          vehicle_model?: string | null
+          vehicle_trim?: string | null
+          vehicle_year?: number | null
+          vendor_id: string
+          vin?: string | null
+        }
+        Update: {
+          created_at?: string
+          id?: string
+          listed_at?: string | null
+          mileage?: number | null
+          notes?: string | null
+          organization_id?: string
+          price?: number | null
+          raw_upload_id?: string | null
+          removed_at?: string | null
+          status?: string
+          stock_number?: string | null
+          updated_at?: string
+          vehicle_make?: string | null
+          vehicle_model?: string | null
+          vehicle_trim?: string | null
+          vehicle_year?: number | null
+          vendor_id?: string
+          vin?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendor_inventory_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "vendor_inventory_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
             referencedColumns: ["id"]
           },
         ]
@@ -499,6 +691,13 @@ export type Database = {
       [_ in never]: never
     }
     Functions: {
+      apply_source_mapping_for_org: {
+        Args: { _org_id: string }
+        Returns: {
+          total_unmapped: number
+          updated_count: number
+        }[]
+      }
       attribute_sales_for_org: {
         Args: { _org_id: string }
         Returns: {
