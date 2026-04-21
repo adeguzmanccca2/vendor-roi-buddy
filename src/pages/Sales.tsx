@@ -113,6 +113,7 @@ export default function SalesPage() {
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
   const [vinFilter, setVinFilter] = useState('');
+  const [vendorFilter, setVendorFilter] = useState<string>('__all__');
   const [nameFilter, setNameFilter] = useState('');
   const [dateFrom, setDateFrom] = useState('');
   const [dateTo, setDateTo] = useState('');
