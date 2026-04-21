@@ -507,6 +507,11 @@ export default function SalesPage() {
                     <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
                     <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
                     <TableCell>{sale.salesperson ?? '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {sale.vendor_id
+                        ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
                     <TableCell>
                       <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
                         {sale.attribution_status}
