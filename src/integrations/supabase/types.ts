@@ -14,6 +14,99 @@ export type Database = {
   }
   public: {
     Tables: {
+      leads: {
+        Row: {
+          created_at: string
+          customer_email: string | null
+          customer_first_name: string | null
+          customer_full_name: string | null
+          customer_last_name: string | null
+          customer_phone: string | null
+          dedup_hash: string | null
+          id: string
+          lead_date: string | null
+          lead_status: string
+          manual_override: boolean
+          normalized_email: string | null
+          normalized_phone: string | null
+          notes: string | null
+          organization_id: string
+          raw_upload_id: string | null
+          source_label: string | null
+          updated_at: string
+          vehicle_make: string | null
+          vehicle_model: string | null
+          vehicle_of_interest: string | null
+          vehicle_year: number | null
+          vendor_id: string | null
+        }
+        Insert: {
+          created_at?: string
+          customer_email?: string | null
+          customer_first_name?: string | null
+          customer_full_name?: string | null
+          customer_last_name?: string | null
+          customer_phone?: string | null
+          dedup_hash?: string | null
+          id?: string
+          lead_date?: string | null
+          lead_status?: string
+          manual_override?: boolean
+          normalized_email?: string | null
+          normalized_phone?: string | null
+          notes?: string | null
+          organization_id: string
+          raw_upload_id?: string | null
+          source_label?: string | null
+          updated_at?: string
+          vehicle_make?: string | null
+          vehicle_model?: string | null
+          vehicle_of_interest?: string | null
+          vehicle_year?: number | null
+          vendor_id?: string | null
+        }
+        Update: {
+          created_at?: string
+          customer_email?: string | null
+          customer_first_name?: string | null
+          customer_full_name?: string | null
+          customer_last_name?: string | null
+          customer_phone?: string | null
+          dedup_hash?: string | null
+          id?: string
+          lead_date?: string | null
+          lead_status?: string
+          manual_override?: boolean
+          normalized_email?: string | null
+          normalized_phone?: string | null
+          notes?: string | null
+          organization_id?: string
+          raw_upload_id?: string | null
+          source_label?: string | null
+          updated_at?: string
+          vehicle_make?: string | null
+          vehicle_model?: string | null
+          vehicle_of_interest?: string | null
+          vehicle_year?: number | null
+          vendor_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "leads_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "leads_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       organizations: {
         Row: {
           created_at: string
@@ -79,6 +172,66 @@ export type Database = {
           },
         ]
       }
+      raw_lead_uploads: {
+        Row: {
+          column_mapping: Json | null
+          created_at: string
+          duplicate_count: number
+          filename: string | null
+          id: string
+          inserted_count: number
+          notes: string | null
+          organization_id: string
+          raw_rows: Json | null
+          row_count: number
+          uploaded_by: string
+          vendor_id: string | null
+        }
+        Insert: {
+          column_mapping?: Json | null
+          created_at?: string
+          duplicate_count?: number
+          filename?: string | null
+          id?: string
+          inserted_count?: number
+          notes?: string | null
+          organization_id: string
+          raw_rows?: Json | null
+          row_count?: number
+          uploaded_by: string
+          vendor_id?: string | null
+        }
+        Update: {
+          column_mapping?: Json | null
+          created_at?: string
+          duplicate_count?: number
+          filename?: string | null
+          id?: string
+          inserted_count?: number
+          notes?: string | null
+          organization_id?: string
+          raw_rows?: Json | null
+          row_count?: number
+          uploaded_by?: string
+          vendor_id?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "raw_lead_uploads_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+          {
+            foreignKeyName: "raw_lead_uploads_vendor_id_fkey"
+            columns: ["vendor_id"]
+            isOneToOne: false
+            referencedRelation: "vendors"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
       user_roles: {
         Row: {
           created_at: string
@@ -104,6 +257,59 @@ export type Database = {
         Relationships: [
           {
             foreignKeyName: "user_roles_organization_id_fkey"
+            columns: ["organization_id"]
+            isOneToOne: false
+            referencedRelation: "organizations"
+            referencedColumns: ["id"]
+          },
+        ]
+      }
+      vendors: {
+        Row: {
+          contact_email: string | null
+          contact_name: string | null
+          contact_phone: string | null
+          created_at: string
+          id: string
+          is_active: boolean
+          monthly_cost: number | null
+          name: string
+          notes: string | null
+          organization_id: string
+          updated_at: string
+          vendor_type: string | null
+        }
+        Insert: {
+          contact_email?: string | null
+          contact_name?: string | null
+          contact_phone?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          monthly_cost?: number | null
+          name: string
+          notes?: string | null
+          organization_id: string
+          updated_at?: string
+          vendor_type?: string | null
+        }
+        Update: {
+          contact_email?: string | null
+          contact_name?: string | null
+          contact_phone?: string | null
+          created_at?: string
+          id?: string
+          is_active?: boolean
+          monthly_cost?: number | null
+          name?: string
+          notes?: string | null
+          organization_id?: string
+          updated_at?: string
+          vendor_type?: string | null
+        }
+        Relationships: [
+          {
+            foreignKeyName: "vendors_organization_id_fkey"
             columns: ["organization_id"]
             isOneToOne: false
             referencedRelation: "organizations"
