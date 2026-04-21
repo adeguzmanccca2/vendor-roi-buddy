@@ -14,6 +14,7 @@ import { toast } from 'sonner';
 import {
   buildDedupHash,
   guessColumn,
+  looksNonHuman,
   normalizeEmail,
   normalizeName,
   normalizePhone,
@@ -21,6 +22,8 @@ import {
   parseVehicle,
   splitName,
 } from '@/lib/normalize';
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
+import { AlertTriangle } from 'lucide-react';
 
 interface Vendor { id: string; name: string }
 
