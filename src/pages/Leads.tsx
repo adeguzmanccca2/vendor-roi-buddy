@@ -171,6 +171,43 @@ export default function LeadsPage() {
 
   const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
+  const toggleOne = (id: string, checked: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (checked: boolean) => {
+    setSelected(checked ? new Set(filtered.map(l => l.id)) : new Set());
+  };
+
+  const deleteSelected = async () => {
+    if (selected.size === 0) return;
+    setDeleting(true);
+    const ids = Array.from(selected);
+    const { error } = await supabase.from('leads').delete().in('id', ids);
+    setDeleting(false);
+    if (error) return toast.error(error.message);
+    toast.success(`Deleted ${ids.length} lead${ids.length === 1 ? '' : 's'}`);
+    setLeads(prev => prev.filter(l => !selected.has(l.id)));
+    setSelected(new Set());
+  };
+
+  const deleteOne = async (id: string) => {
+    const { error } = await supabase.from('leads').delete().eq('id', id);
+    if (error) return toast.error(error.message);
+    toast.success('Lead deleted');
+    setLeads(prev => prev.filter(l => l.id !== id));
+    setSelected(prev => {
+      const n = new Set(prev);
+      n.delete(id);
+      return n;
+    });
+  };
+
+
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership to view leads.</p>;
 
   return (
