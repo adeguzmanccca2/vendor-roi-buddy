@@ -61,6 +61,8 @@ export default function LeadsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     if (!activeOrgId) { setLeads([]); setVendors([]); setLoading(false); return; }
