@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, Upload } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, Upload, DollarSign, TrendingUp } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
@@ -19,14 +19,18 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/admin/users', label: 'Users', icon: Users },
     { to: '/vendors', label: 'Vendors', icon: Store },
     { to: '/leads', label: 'Leads', icon: ListChecks },
-    { to: '/upload', label: 'Upload CSV', icon: Upload },
+    { to: '/upload', label: 'Upload Leads', icon: Upload },
+    { to: '/sales/upload', label: 'Upload Sales', icon: DollarSign },
+    { to: '/attribution', label: 'Attribution', icon: TrendingUp },
   ];
 
   const clientLinks = [
     { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
     { to: '/vendors', label: 'Vendors', icon: Store },
     { to: '/leads', label: 'Leads', icon: ListChecks },
-    { to: '/upload', label: 'Upload CSV', icon: Upload },
+    { to: '/upload', label: 'Upload Leads', icon: Upload },
+    { to: '/sales/upload', label: 'Upload Sales', icon: DollarSign },
+    { to: '/attribution', label: 'Attribution', icon: TrendingUp },
   ];
 
   const links = isAdmin ? adminLinks : clientLinks;
