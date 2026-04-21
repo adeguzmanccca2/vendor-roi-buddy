@@ -18,8 +18,10 @@ import SourceRulesPage from '@/pages/SourceRules';
 import InventoryPage from '@/pages/Inventory';
 import InventoryUploadPage from '@/pages/InventoryUpload';
 import AdminOverview from '@/pages/admin/AdminOverview';
-import AdminDealerships from '@/pages/admin/AdminDealerships';
 import AdminUsers from '@/pages/admin/AdminUsers';
+import PortalOverview from '@/pages/admin/portal/PortalOverview';
+import DealershipsList from '@/pages/admin/portal/DealershipsList';
+import DealershipNew from '@/pages/admin/portal/DealershipNew';
 import NotFound from '@/pages/NotFound';
 
 const queryClient = new QueryClient();
@@ -118,10 +120,26 @@ const App = () => (
                 }
               />
               <Route
-                path="/admin/dealerships"
+                path="/admin/portal"
                 element={
                   <ProtectedRoute requireRole="admin">
-                    <AppLayout><AdminDealerships /></AppLayout>
+                    <AppLayout><PortalOverview /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/portal/dealerships"
+                element={
+                  <ProtectedRoute requireRole="admin">
+                    <AppLayout><DealershipsList /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/portal/dealerships/new"
+                element={
+                  <ProtectedRoute requireRole="admin">
+                    <AppLayout><DealershipNew /></AppLayout>
                   </ProtectedRoute>
                 }
               />
