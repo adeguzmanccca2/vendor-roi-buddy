@@ -156,7 +156,7 @@ export default function SalesUploadPage() {
         const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
         const totalCol = normalizeRevenue(get(row, 'total_gross'));
         const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
-        const total = totalCol ?? (front + back) ?? gross;
+        const total = totalCol ?? ((front + back) || gross);
         const salePrice = normalizeRevenue(get(row, 'sale_price'));
 
         // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
