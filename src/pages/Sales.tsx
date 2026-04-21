@@ -257,6 +257,7 @@ export default function SalesPage() {
     setNameFilter('');
     setDateFrom('');
     setDateTo('');
+    setVendorFilter('__all__');
   };
 
   const openEdit = (sale: Sale) => {
