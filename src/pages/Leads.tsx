@@ -10,8 +10,10 @@ import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
-import { Plus, Upload, Pencil, Download } from 'lucide-react';
+import { Checkbox } from '@/components/ui/checkbox';
+import { Plus, Upload, Pencil, Download, Trash2 } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -59,6 +61,8 @@ export default function LeadsPage() {
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     if (!activeOrgId) { setLeads([]); setVendors([]); setLoading(false); return; }
@@ -167,6 +171,43 @@ export default function LeadsPage() {
 
   const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
+  const toggleOne = (id: string, checked: boolean) => {
+    setSelected(prev => {
+      const next = new Set(prev);
+      if (checked) next.add(id); else next.delete(id);
+      return next;
+    });
+  };
+
+  const toggleAll = (checked: boolean) => {
+    setSelected(checked ? new Set(filtered.map(l => l.id)) : new Set());
+  };
+
+  const deleteSelected = async () => {
+    if (selected.size === 0) return;
+    setDeleting(true);
+    const ids = Array.from(selected);
+    const { error } = await supabase.from('leads').delete().in('id', ids);
+    setDeleting(false);
+    if (error) return toast.error(error.message);
+    toast.success(`Deleted ${ids.length} lead${ids.length === 1 ? '' : 's'}`);
+    setLeads(prev => prev.filter(l => !selected.has(l.id)));
+    setSelected(new Set());
+  };
+
+  const deleteOne = async (id: string) => {
+    const { error } = await supabase.from('leads').delete().eq('id', id);
+    if (error) return toast.error(error.message);
+    toast.success('Lead deleted');
+    setLeads(prev => prev.filter(l => l.id !== id));
+    setSelected(prev => {
+      const n = new Set(prev);
+      n.delete(id);
+      return n;
+    });
+  };
+
+
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership to view leads.</p>;
 
   return (
@@ -177,6 +218,29 @@ export default function LeadsPage() {
           <p className="text-sm text-muted-foreground">{activeOrg?.name}</p>
         </div>
         <div className="flex flex-wrap gap-2">
+          {selected.size > 0 && (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button variant="destructive" disabled={deleting}>
+                  <Trash2 className="mr-1 h-4 w-4" /> Delete {selected.size}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>Delete {selected.size} lead{selected.size === 1 ? '' : 's'}?</AlertDialogTitle>
+                  <AlertDialogDescription>
+                    This permanently removes the selected leads. Any sales attributed to them will be unlinked. This cannot be undone.
+                  </AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>Cancel</AlertDialogCancel>
+                  <AlertDialogAction onClick={deleteSelected} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                    Delete
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          )}
           <Button variant="outline" onClick={() => {
             const vMap = new Map(vendors.map(v => [v.id, v.name]));
             downloadCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, leads.map(l => ({
@@ -304,6 +368,13 @@ export default function LeadsPage() {
               <Table>
                 <TableHeader>
                   <TableRow>
+                    <TableHead className="w-10">
+                      <Checkbox
+                        checked={filtered.length > 0 && filtered.every(l => selected.has(l.id))}
+                        onCheckedChange={(c) => toggleAll(!!c)}
+                        aria-label="Select all"
+                      />
+                    </TableHead>
                     <TableHead>Date</TableHead>
                     <TableHead>Customer</TableHead>
                     <TableHead>Contact</TableHead>
@@ -315,7 +386,14 @@ export default function LeadsPage() {
                 </TableHeader>
                 <TableBody>
                   {filtered.map(l => (
-                    <TableRow key={l.id}>
+                    <TableRow key={l.id} data-state={selected.has(l.id) ? 'selected' : undefined}>
+                      <TableCell>
+                        <Checkbox
+                          checked={selected.has(l.id)}
+                          onCheckedChange={(c) => toggleOne(l.id, !!c)}
+                          aria-label={`Select lead ${l.customer_full_name ?? ''}`}
+                        />
+                      </TableCell>
                       <TableCell className="text-xs text-muted-foreground">
                         {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
                       </TableCell>
@@ -346,9 +424,32 @@ export default function LeadsPage() {
                         </Select>
                       </TableCell>
                       <TableCell className="text-right">
-                        <Button variant="ghost" size="sm" onClick={() => openEdit(l)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="sm" onClick={() => openEdit(l)} aria-label="Edit lead">
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <AlertDialog>
+                            <AlertDialogTrigger asChild>
+                              <Button variant="ghost" size="sm" aria-label="Delete lead">
+                                <Trash2 className="h-4 w-4 text-destructive" />
+                              </Button>
+                            </AlertDialogTrigger>
+                            <AlertDialogContent>
+                              <AlertDialogHeader>
+                                <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+                                <AlertDialogDescription>
+                                  Permanently removes {l.customer_full_name ?? 'this lead'}. Any sales attributed to it will be unlinked.
+                                </AlertDialogDescription>
+                              </AlertDialogHeader>
+                              <AlertDialogFooter>
+                                <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                <AlertDialogAction onClick={() => deleteOne(l.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
+                                  Delete
+                                </AlertDialogAction>
+                              </AlertDialogFooter>
+                            </AlertDialogContent>
+                          </AlertDialog>
+                        </div>
                       </TableCell>
                     </TableRow>
                   ))}
