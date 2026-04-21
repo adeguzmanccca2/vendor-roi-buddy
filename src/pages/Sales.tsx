@@ -412,7 +412,8 @@ export default function SalesPage() {
 
       <Card>
         <CardContent className="p-0">
-          <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto">
+          {/* Single scroll container (the Table component's own wrapper div) — handles BOTH axes */}
+          <div className="[&>div]:max-h-[calc(100vh-380px)] [&>div]:min-h-[300px] [&>div]:overflow-auto">
             <Table className="min-w-[1400px]">
               <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                 <TableRow>
