@@ -71,6 +71,8 @@ export default function SalesUploadPage() {
   const [busy, setBusy] = useState(false);
   const [attributing, setAttributing] = useState(false);
   const [result, setResult] = useState<{ inserted: number; duplicates: number; uploadId: string } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const [rowSkips, setRowSkips] = useState<{ row: number; reason: string }[]>([]);
 
   const onFile = (f: File | null) => {
     setFile(f);
