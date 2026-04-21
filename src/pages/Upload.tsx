@@ -461,6 +461,51 @@ export default function UploadPage() {
             </CardContent>
           </Card>
 
+          <Card>
+            <CardHeader>
+              <CardTitle className="text-base">5. Final preview — first 5 records exactly as they will be saved</CardTitle>
+              <p className="text-xs text-muted-foreground mt-1">
+                Includes normalization: split first/last name, parsed year/make/model from VOI, parsed dates, normalized phone/email. Empty values display as <code className="px-1 rounded bg-muted">null</code>.
+              </p>
+            </CardHeader>
+            <CardContent className="overflow-x-auto">
+              {normalizedPreview.length === 0 ? (
+                <p className="text-xs text-muted-foreground">Map at least one column to see the preview.</p>
+              ) : (
+                <div className="max-h-[420px] overflow-auto rounded-md border border-border">
+                  <table className="w-full text-xs">
+                    <thead className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
+                      <tr>
+                        <th className="px-2 py-1 text-left font-medium">Field</th>
+                        {normalizedPreview.map((_, i) => (
+                          <th key={i} className="px-2 py-1 text-left font-medium whitespace-nowrap">Row {i + 1}</th>
+                        ))}
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {Object.keys(normalizedPreview[0]).map(field => (
+                        <tr key={field} className="border-b">
+                          <td className="px-2 py-1 font-medium whitespace-nowrap text-foreground">{field}</td>
+                          {normalizedPreview.map((row, i) => {
+                            const v = (row as any)[field];
+                            const display = v === null || v === undefined || v === ''
+                              ? <span className="text-muted-foreground/50 italic">null</span>
+                              : String(v);
+                            return (
+                              <td key={i} className="px-2 py-1 align-top whitespace-nowrap text-muted-foreground">
+                                {display}
+                              </td>
+                            );
+                          })}
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </CardContent>
+          </Card>
+
           {nameWarnings.length > 0 && (
             <Alert variant="destructive">
               <AlertTriangle className="h-4 w-4" />
