@@ -105,6 +105,8 @@ export default function SalesUploadPage() {
     if (!activeOrgId || !user || !file) return;
     if (rows.length === 0) return toast.error('No rows to import');
     setBusy(true);
+    setImportError(null);
+    setRowSkips([]);
     try {
       const { data: upload, error: upErr } = await supabase
         .from('raw_sales_uploads')
