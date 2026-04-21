@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Upload, Pencil, Download, Trash2 } from 'lucide-react';
+import { Plus, Upload, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -33,13 +33,49 @@ interface Lead {
   customer_email: string | null;
   customer_phone: string | null;
   vehicle_of_interest: string | null;
+  vehicle_year: number | null;
+  vehicle_make: string | null;
+  vehicle_model: string | null;
+  vin: string | null;
   lead_date: string | null;
   lead_status: string;
   vendor_id: string | null;
   manual_override: boolean;
+  source_label: string | null;
 }
 
 const STATUS_OPTIONS = ['new', 'contacted', 'appointment', 'sold', 'lost'];
+
+type SortKey = 'lead_date' | 'customer_full_name' | 'customer_email' | 'vin' | 'vehicle' | 'vendor' | 'lead_status';
+
+function SortHeader({
+  label,
+  k,
+  sortKey,
+  sortDir,
+  onClick,
+}: {
+  label: string;
+  k: SortKey;
+  sortKey: SortKey;
+  sortDir: 'asc' | 'desc';
+  onClick: (k: SortKey) => void;
+}) {
+  const active = sortKey === k;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead>
+      <button
+        type="button"
+        onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'}`}
+      >
+        {label}
+        <Icon className="h-3 w-3" />
+      </button>
+    </TableHead>
+  );
+}
 
 const emptyForm = {
   customer_full_name: '',
@@ -57,18 +93,30 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState({ vendor: 'all', status: 'all', search: '' });
+  const [filter, setFilter] = useState({ vendor: 'all', status: 'all', search: '', vin: '' });
+  const [sortKey, setSortKey] = useState<SortKey>('lead_date');
+  const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
 
+  const toggleSort = (k: SortKey) => {
+    if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    else { setSortKey(k); setSortDir('asc'); }
+  };
+
   const load = async () => {
     if (!activeOrgId) { setLeads([]); setVendors([]); setLoading(false); return; }
     setLoading(true);
     const [{ data: l }, { data: v }] = await Promise.all([
-      supabase.from('leads').select('*').eq('organization_id', activeOrgId).order('lead_date', { ascending: false, nullsFirst: false }).limit(500),
+      supabase
+        .from('leads')
+        .select('id, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label')
+        .eq('organization_id', activeOrgId)
+        .order('lead_date', { ascending: false, nullsFirst: false })
+        .limit(1000),
       supabase.from('vendors').select('id, name, is_active').eq('organization_id', activeOrgId).order('name'),
     ]);
     setLeads((l ?? []) as Lead[]);
@@ -78,19 +126,54 @@ export default function LeadsPage() {
 
   useEffect(() => { load(); }, [activeOrgId]);
 
-  const filtered = leads.filter(l => {
-    if (filter.vendor !== 'all') {
-      if (filter.vendor === 'unassigned' && l.vendor_id) return false;
-      if (filter.vendor !== 'unassigned' && l.vendor_id !== filter.vendor) return false;
-    }
-    if (filter.status !== 'all' && l.lead_status !== filter.status) return false;
-    if (filter.search) {
-      const q = filter.search.toLowerCase();
-      const hay = `${l.customer_full_name ?? ''} ${l.customer_email ?? ''} ${l.customer_phone ?? ''} ${l.vehicle_of_interest ?? ''}`.toLowerCase();
-      if (!hay.includes(q)) return false;
-    }
-    return true;
-  });
+  const vehicleStr = (l: Lead) =>
+    [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || l.vehicle_of_interest || '';
+
+  const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
+
+  const filtered = useMemo(() => {
+    const vinQ = filter.vin.trim().toLowerCase();
+    const q = filter.search.trim().toLowerCase();
+    return leads.filter(l => {
+      if (filter.vendor !== 'all') {
+        if (filter.vendor === 'unassigned' && l.vendor_id) return false;
+        if (filter.vendor !== 'unassigned' && l.vendor_id !== filter.vendor) return false;
+      }
+      if (filter.status !== 'all' && l.lead_status !== filter.status) return false;
+      if (vinQ && !(l.vin ?? '').toLowerCase().includes(vinQ)) return false;
+      if (q) {
+        const hay = `${l.customer_full_name ?? ''} ${l.customer_email ?? ''} ${l.customer_phone ?? ''} ${l.vehicle_of_interest ?? ''} ${l.vin ?? ''} ${vendorName(l.vendor_id)} ${l.source_label ?? ''}`.toLowerCase();
+        if (!hay.includes(q)) return false;
+      }
+      return true;
+    });
+  }, [leads, filter, vendors]);
+
+  const sorted = useMemo(() => {
+    const arr = [...filtered];
+    const dir = sortDir === 'asc' ? 1 : -1;
+    const getVal = (l: Lead): string | number | null => {
+      switch (sortKey) {
+        case 'lead_date': return l.lead_date ? new Date(l.lead_date).getTime() : null;
+        case 'customer_full_name': return l.customer_full_name;
+        case 'customer_email': return l.customer_email;
+        case 'vin': return l.vin;
+        case 'vehicle': return vehicleStr(l) || null;
+        case 'vendor': return vendorName(l.vendor_id);
+        case 'lead_status': return l.lead_status;
+      }
+    };
+    arr.sort((a, b) => {
+      const av = getVal(a); const bv = getVal(b);
+      if (av == null && bv == null) return 0;
+      if (av == null) return 1;
+      if (bv == null) return -1;
+      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
+      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
+    });
+    return arr;
+  }, [filtered, sortKey, sortDir, vendors]);
+
 
   const openNew = () => { setEditing(null); setForm({ ...emptyForm }); setOpen(true); };
 
@@ -169,7 +252,6 @@ export default function LeadsPage() {
     setLeads(prev => prev.map(l => l.id === id ? { ...l, vendor_id: v, manual_override: true } : l));
   };
 
-  const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
   const toggleOne = (id: string, checked: boolean) => {
     setSelected(prev => {
@@ -332,13 +414,19 @@ export default function LeadsPage() {
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <CardTitle>All Leads ({filtered.length})</CardTitle>
+            <CardTitle>All Leads ({filtered.length} of {leads.length})</CardTitle>
             <div className="flex flex-wrap gap-2">
               <Input
-                placeholder="Search name/email/phone/vehicle"
-                className="w-64"
+                placeholder="Search anything…"
+                className="w-56"
                 value={filter.search}
                 onChange={e => setFilter({ ...filter, search: e.target.value })}
+              />
+              <Input
+                placeholder="VIN contains…"
+                className="w-44"
+                value={filter.vin}
+                onChange={e => setFilter({ ...filter, vin: e.target.value })}
               />
               <Select value={filter.vendor} onValueChange={v => setFilter({ ...filter, vendor: v })}>
                 <SelectTrigger className="w-44"><SelectValue placeholder="Vendor" /></SelectTrigger>
@@ -361,31 +449,34 @@ export default function LeadsPage() {
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : filtered.length === 0 ? (
+          ) : sorted.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No leads match.</p>
           ) : (
-            <div className="overflow-x-auto">
-              <Table>
-                <TableHeader>
+            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto rounded-md border border-border">
+              <Table className="min-w-[1400px]">
+                <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
                     <TableHead className="w-10">
                       <Checkbox
-                        checked={filtered.length > 0 && filtered.every(l => selected.has(l.id))}
+                        checked={sorted.length > 0 && sorted.every(l => selected.has(l.id))}
                         onCheckedChange={(c) => toggleAll(!!c)}
                         aria-label="Select all"
                       />
                     </TableHead>
-                    <TableHead>Date</TableHead>
-                    <TableHead>Customer</TableHead>
-                    <TableHead>Contact</TableHead>
-                    <TableHead>Vehicle</TableHead>
-                    <TableHead>Vendor</TableHead>
-                    <TableHead>Status</TableHead>
-                    <TableHead></TableHead>
+                    <SortHeader label="Date" k="lead_date" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Email" k="customer_email" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead>Phone</TableHead>
+                    <SortHeader label="VIN" k="vin" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Vehicle" k="vehicle" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead>Source</TableHead>
+                    <SortHeader label="Vendor" k="vendor" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <SortHeader label="Status" k="lead_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead className="w-24 text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
-                  {filtered.map(l => (
+                  {sorted.map(l => (
                     <TableRow key={l.id} data-state={selected.has(l.id) ? 'selected' : undefined}>
                       <TableCell>
                         <Checkbox
@@ -394,18 +485,18 @@ export default function LeadsPage() {
                           aria-label={`Select lead ${l.customer_full_name ?? ''}`}
                         />
                       </TableCell>
-                      <TableCell className="text-xs text-muted-foreground">
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
                       </TableCell>
                       <TableCell className="font-medium">
                         {l.customer_full_name ?? '—'}
                         {l.manual_override && <Badge variant="outline" className="ml-2 text-[10px]">manual</Badge>}
                       </TableCell>
-                      <TableCell className="text-xs">
-                        <div>{l.customer_email ?? '—'}</div>
-                        <div className="text-muted-foreground">{l.customer_phone ?? '—'}</div>
-                      </TableCell>
-                      <TableCell className="text-sm">{l.vehicle_of_interest ?? '—'}</TableCell>
+                      <TableCell className="text-xs">{l.customer_email ?? '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-xs">{l.customer_phone ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs">{l.vin ?? '—'}</TableCell>
+                      <TableCell className="text-sm">{vehicleStr(l) || '—'}</TableCell>
+                      <TableCell className="text-xs text-muted-foreground">{l.source_label ?? '—'}</TableCell>
                       <TableCell>
                         <Select value={l.vendor_id ?? 'none'} onValueChange={v => updateVendor(l.id, v)}>
                           <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
