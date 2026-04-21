@@ -201,14 +201,24 @@ export default function AttributionPage() {
   }, [vendors, sales, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
-    const t = perf.reduce((acc, r) => ({
-      revenue: acc.revenue + r.revenue,
-      cost: acc.cost + r.cost,
-      sales: acc.sales + r.sales,
-      leads: acc.leads + r.leads,
-    }), { revenue: 0, cost: 0, sales: 0, leads: 0 });
-    return { ...t, roi: t.cost > 0 ? (t.revenue - t.cost) / t.cost : 0 };
-  }, [perf]);
+    // Revenue & sales count come straight from the filtered sales array so
+    // orphaned vendor_ids (vendor deleted) still contribute to the total.
+    const revenue = sales.reduce(
+      (a, s) => a + Number(s.total_gross ?? s.gross_revenue ?? 0),
+      0,
+    );
+    const salesCount = sales.length;
+    // Cost & leads still come from per-vendor perf rows (only known vendors have cost).
+    const cost = perf.reduce((a, r) => a + r.cost, 0);
+    const leads = perf.reduce((a, r) => a + r.leads, 0);
+    return {
+      revenue,
+      sales: salesCount,
+      cost,
+      leads,
+      roi: cost > 0 ? (revenue - cost) / cost : 0,
+    };
+  }, [sales, perf]);
 
   // 12-month revenue trend
   const trend = useMemo(() => {
