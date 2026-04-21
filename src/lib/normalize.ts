@@ -91,16 +91,33 @@ export function normalizeRevenue(input?: string | null): number | null {
   return isNeg ? -n : n;
 }
 
-/** Best-effort fuzzy column matcher for CSV headers */
+/** Best-effort fuzzy column matcher for CSV headers.
+ * Uses word-boundary matching so "last price" doesn't match a candidate like "last". */
 export function guessColumn(headers: string[], candidates: string[]): string | null {
   const lower = headers.map(h => h.toLowerCase().trim());
+  // 1. exact match
   for (const cand of candidates) {
     const idx = lower.findIndex(h => h === cand.toLowerCase());
     if (idx >= 0) return headers[idx];
   }
+  // 2. word-boundary match (prevents "last" matching "last price")
   for (const cand of candidates) {
-    const idx = lower.findIndex(h => h.includes(cand.toLowerCase()));
+    const c = cand.toLowerCase();
+    const re = new RegExp(`\\b${c.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\b`);
+    const idx = lower.findIndex(h => re.test(h));
     if (idx >= 0) return headers[idx];
   }
   return null;
+}
+
+/** Detects values that look like prices/numbers — used to warn when a name column
+ * is actually mapped to a numeric/currency field. */
+export function looksNonHuman(value?: string | null): boolean {
+  if (!value) return false;
+  const s = String(value).trim();
+  if (!s) return false;
+  if (s.includes('$')) return true;
+  // pure number (with optional decimals/commas/sign)
+  if (/^-?[\d,]+(\.\d+)?$/.test(s)) return true;
+  return false;
 }
