@@ -468,6 +468,7 @@ export default function SalesPage() {
                   <SortHeader label="Price" k="sale_price" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Total gross" k="total_gross" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
