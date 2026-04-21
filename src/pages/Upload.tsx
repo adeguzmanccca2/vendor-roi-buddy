@@ -134,19 +134,39 @@ export default function UploadPage() {
           [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
         const email = get(row, 'email');
         const phone = get(row, 'phone');
-        if (!fullName && !email && !phone) continue;
+        const veh = get(row, 'vehicle');
+        const vin = get(row, 'vin');
+
+        // Skip only truly empty rows (no identifier of any kind)
+        if (!fullName && !email && !phone && !veh && !vin) continue;
 
         const normEmail = normalizeEmail(email);
         const normPhone = normalizePhone(phone);
-        const veh = get(row, 'vehicle');
         const parsed = parseVehicle(veh);
         const { first, last } = splitName(fullName);
+
+        // Prefer explicit Year/Make/Model columns; fall back to parsed VOI text
+        const yearRaw = get(row, 'year');
+        const yearNum = yearRaw ? parseInt(yearRaw, 10) : NaN;
+        const explicitYear = !isNaN(yearNum) ? yearNum : null;
+        const explicitMake = get(row, 'make') || null;
+        const explicitModel = get(row, 'model') || null;
+
+        const toNum = (s: string): number | null => {
+          if (!s) return null;
+          const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
+          return isNaN(n) ? null : n;
+        };
+        const toInt = (s: string): number | null => {
+          const n = toNum(s);
+          return n === null ? null : Math.round(n);
+        };
 
         const hash = await buildDedupHash({
           email: normEmail,
           phone: normPhone,
           name: normalizeName(fullName),
-          vehicle: normalizeName(veh),
+          vehicle: normalizeName(veh || vin),
         });
         if (seenHashes.has(hash)) { dupesInBatch++; continue; }
         seenHashes.add(hash);
@@ -164,9 +184,18 @@ export default function UploadPage() {
           normalized_phone: normPhone,
           dedup_hash: hash,
           vehicle_of_interest: veh || null,
-          vehicle_year: parsed.year,
-          vehicle_make: parsed.make,
-          vehicle_model: parsed.model,
+          vehicle_year: explicitYear ?? parsed.year,
+          vehicle_make: explicitMake ?? parsed.make,
+          vehicle_model: explicitModel ?? parsed.model,
+          vin: vin || null,
+          vehicle_trim: get(row, 'trim') || null,
+          body_style: get(row, 'body_style') || null,
+          dol: toInt(get(row, 'dol')),
+          last_price: toNum(get(row, 'last_price')),
+          lotlinx_vdp: toInt(get(row, 'lotlinx_vdp')),
+          total_vdp: toInt(get(row, 'total_vdp')),
+          net_new_shoppers: toInt(get(row, 'net_new_shoppers')),
+          pct_sales_opps_since_campaign: toNum(get(row, 'pct_sales_opps')),
           lead_date: parseLeadDate(get(row, 'lead_date')) ?? new Date().toISOString(),
           source_label: get(row, 'source') || null,
           lead_status: 'new',
