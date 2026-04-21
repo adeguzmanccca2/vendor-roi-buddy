@@ -314,15 +314,6 @@ export default function SalesPage() {
     setEditing(null);
     void load();
   };
-    const { error } = await supabase.from('sales').update(payload).eq('id', editing.id);
-    if (error) {
-      toast.error('Update failed', { description: error.message });
-      return;
-    }
-    toast.success('Sale updated');
-    setEditing(null);
-    void load();
-  };
 
   const doDelete = async () => {
     if (!confirmDelete) return;
