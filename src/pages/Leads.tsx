@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Upload, Pencil, Download, Trash2 } from 'lucide-react';
+import { Plus, Upload, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -33,13 +33,49 @@ interface Lead {
   customer_email: string | null;
   customer_phone: string | null;
   vehicle_of_interest: string | null;
+  vehicle_year: number | null;
+  vehicle_make: string | null;
+  vehicle_model: string | null;
+  vin: string | null;
   lead_date: string | null;
   lead_status: string;
   vendor_id: string | null;
   manual_override: boolean;
+  source_label: string | null;
 }
 
 const STATUS_OPTIONS = ['new', 'contacted', 'appointment', 'sold', 'lost'];
+
+type SortKey = 'lead_date' | 'customer_full_name' | 'customer_email' | 'vin' | 'vehicle' | 'vendor' | 'lead_status';
+
+function SortHeader({
+  label,
+  k,
+  sortKey,
+  sortDir,
+  onClick,
+}: {
+  label: string;
+  k: SortKey;
+  sortKey: SortKey;
+  sortDir: 'asc' | 'desc';
+  onClick: (k: SortKey) => void;
+}) {
+  const active = sortKey === k;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  return (
+    <TableHead>
+      <button
+        type="button"
+        onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'}`}
+      >
+        {label}
+        <Icon className="h-3 w-3" />
+      </button>
+    </TableHead>
+  );
+}
 
 const emptyForm = {
   customer_full_name: '',
