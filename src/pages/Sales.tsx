@@ -395,7 +395,7 @@ export default function SalesPage() {
           <CardTitle className="text-base">Filters</CardTitle>
         </CardHeader>
         <CardContent className="space-y-3">
-          <div className="grid gap-3 md:grid-cols-5">
+          <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
             <div>
               <Label className="text-xs">Search</Label>
               <div className="relative">
@@ -415,6 +415,19 @@ export default function SalesPage() {
             <div>
               <Label className="text-xs">VIN</Label>
               <Input placeholder="VIN contains..." value={vinFilter} onChange={e => setVinFilter(e.target.value)} />
+            </div>
+            <div>
+              <Label className="text-xs">Vendor</Label>
+              <Select value={vendorFilter} onValueChange={setVendorFilter}>
+                <SelectTrigger><SelectValue /></SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="__all__">All vendors</SelectItem>
+                  <SelectItem value="__none__">Unassigned</SelectItem>
+                  {vendorList.map(v => (
+                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
             </div>
             <div>
               <Label className="text-xs">Sold from</Label>
