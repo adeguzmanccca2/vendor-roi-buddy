@@ -121,7 +121,7 @@ export default function AttributionPage() {
   const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const [period, setPeriod] = useState<Period>('mtd');
+  const [period, setPeriod] = useState<Period>('all');
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
 
