@@ -34,7 +34,7 @@ interface SaleRow {
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
   stock_number: string | null; deal_number: string | null;
 }
-interface LeadCount { vendor_id: string | null }
+interface LeadCount { vendor_id: string | null; lead_date: string | null }
 
 interface VendorPerf {
   vendor: Vendor | null;
@@ -135,8 +135,10 @@ export default function AttributionPage() {
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
       .eq('organization_id', activeOrgId).order('name');
-    const lQ = supabase.from('leads').select('vendor_id')
+    let lQ = supabase.from('leads').select('vendor_id, lead_date')
       .eq('organization_id', activeOrgId);
+    if (sinceIso) lQ = lQ.gte('lead_date', sinceIso);
+    if (untilIso) lQ = lQ.lt('lead_date', untilIso);
     let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
