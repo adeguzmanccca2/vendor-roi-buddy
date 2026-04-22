@@ -61,18 +61,18 @@ const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-type Period = 'mtd' | '30' | '90' | '12m' | 'all' | `m:${string}`;
+type Period = `m:${string}`;
 
 function isMonthPeriod(p: Period): p is `m:${string}` {
   return typeof p === 'string' && p.startsWith('m:');
 }
 
+function currentMonthPeriod(): Period {
+  const d = new Date();
+  return `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+}
+
 function periodRange(p: Period): { start: string | null; end: string | null } {
-  const now = new Date();
-  if (p === 'mtd') return { start: new Date(now.getFullYear(), now.getMonth(), 1).toISOString(), end: null };
-  if (p === '30') return { start: new Date(Date.now() - 30 * 86400000).toISOString(), end: null };
-  if (p === '90') return { start: new Date(Date.now() - 90 * 86400000).toISOString(), end: null };
-  if (p === '12m') return { start: new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString(), end: null };
   if (isMonthPeriod(p)) {
     const [y, m] = p.slice(2).split('-').map(Number);
     const start = new Date(y, m - 1, 1);
@@ -82,16 +82,8 @@ function periodRange(p: Period): { start: string | null; end: string | null } {
   return { start: null, end: null };
 }
 
-function periodMonths(p: Period): number {
-  if (p === 'mtd') {
-    const now = new Date();
-    return now.getDate() / 30;
-  }
-  if (p === '30') return 1;
-  if (p === '90') return 3;
-  if (p === '12m') return 12;
-  if (isMonthPeriod(p)) return 1;
-  return 12;
+function periodMonths(_p: Period): number {
+  return 1;
 }
 
 function monthOptions(count = 24): { value: `m:${string}`; label: string }[] {
@@ -122,7 +114,7 @@ export default function AttributionPage() {
   const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
-  const [period, setPeriod] = useState<Period>('all');
+  const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
@@ -321,14 +313,9 @@ export default function AttributionPage() {
           <Select value={period} onValueChange={v => setPeriod(v as Period)}>
             <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
             <SelectContent>
-              <SelectItem value="mtd">Month-to-date</SelectItem>
-              <SelectItem value="30">Last 30 days</SelectItem>
-              <SelectItem value="90">Last 90 days</SelectItem>
-              <SelectItem value="12m">Last 12 months</SelectItem>
-              <SelectItem value="all">All time</SelectItem>
               <SelectGroup>
-                <SelectLabel>Specific month</SelectLabel>
-                {monthOptions(24).map(m => (
+                <SelectLabel>Month</SelectLabel>
+                {monthOptions(36).map(m => (
                   <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
                 ))}
               </SelectGroup>
