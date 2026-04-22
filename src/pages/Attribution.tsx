@@ -26,6 +26,7 @@ interface SaleRow {
   normalized_phone: string | null;
   organization_id: string;
   sale_date: string | null;
+  sale_price: number | null;
   total_gross: number | null; gross_revenue: number | null;
   attribution_status: string; attribution_confidence: number | null;
   manual_override: boolean;
