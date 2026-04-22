@@ -169,7 +169,7 @@ export default function AttributionPage() {
     for (const s of sales) {
       const key = s.vendor_id;
       const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
-      cur.revenue += Number(s.total_gross ?? s.gross_revenue ?? 0);
+      cur.revenue += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
       cur.sales += 1;
       byVendor.set(key, cur);
     }
@@ -205,7 +205,7 @@ export default function AttributionPage() {
     // Revenue & sales count come straight from the filtered sales array so
     // orphaned vendor_ids (vendor deleted) still contribute to the total.
     const revenue = sales.reduce(
-      (a, s) => a + Number(s.total_gross ?? s.gross_revenue ?? 0),
+      (a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0),
       0,
     );
     const salesCount = sales.length;
@@ -233,7 +233,7 @@ export default function AttributionPage() {
       if (!s.sale_date) continue;
       const d = new Date(s.sale_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.total_gross ?? s.gross_revenue ?? 0);
+      if (key in buckets) buckets[key] += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
     }
     return Object.entries(buckets).map(([month, revenue]) => ({
       month: month.slice(5) + '/' + month.slice(2, 4),
@@ -290,7 +290,7 @@ export default function AttributionPage() {
       vehicle: [s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' '),
       stock_number: s.stock_number ?? '',
       deal_number: s.deal_number ?? '',
-      gross: Number(s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
+      gross: Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
       vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution: s.attribution_status,
       confidence: s.attribution_confidence ?? '',
@@ -472,7 +472,7 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 text-muted-foreground">
                       {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
                     </td>
-                    <td className="px-4 py-2 text-right">{fmtMoney(Number(s.total_gross ?? s.gross_revenue ?? 0))}</td>
+                    <td className="px-4 py-2 text-right">{fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}</td>
                     <td className="px-4 py-2 text-center">
                       <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
                     </td>
