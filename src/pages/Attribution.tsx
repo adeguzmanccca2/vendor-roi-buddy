@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
 } from 'lucide-react';
@@ -124,6 +125,7 @@ export default function AttributionPage() {
   const [period, setPeriod] = useState<Period>('all');
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
+  const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
 
   const load = async () => {
     if (!activeOrgId) return;
@@ -429,7 +431,19 @@ export default function AttributionPage() {
                   <tr key={r.vendor?.id ?? 'unassigned'} className="border-b hover:bg-muted/30">
                     <td className="px-4 py-2 font-medium">{r.vendorName}</td>
                     <td className="px-4 py-2 text-right">{r.leads}</td>
-                    <td className="px-4 py-2 text-right">{r.sales}</td>
+                    <td className="px-4 py-2 text-right">
+                      {r.sales > 0 ? (
+                        <button
+                          type="button"
+                          className="font-medium text-primary underline-offset-2 hover:underline"
+                          onClick={() => setVendorSalesView({ id: r.vendor?.id ?? null, name: r.vendorName })}
+                        >
+                          {r.sales}
+                        </button>
+                      ) : (
+                        r.sales
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">{fmtPct(r.closeRate)}</td>
                     <td className="px-4 py-2 text-right">{r.cost > 0 ? fmtMoney(r.cost) : '—'}</td>
                     <td className="px-4 py-2 text-right">{r.cpl > 0 ? fmtMoney(r.cpl) : '—'}</td>
@@ -496,6 +510,63 @@ export default function AttributionPage() {
         onOpenChange={setOverrideOpen}
         onSaved={load}
       />
+
+      <Dialog open={!!vendorSalesView} onOpenChange={(o) => !o && setVendorSalesView(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Sales attributed to {vendorSalesView?.name}</DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const list = sales.filter(s =>
+                  vendorSalesView?.id === null ? !s.vendor_id : s.vendor_id === vendorSalesView?.id
+                );
+                const rev = list.reduce((a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0), 0);
+                return `${list.length} sale(s) · ${fmtMoney(rev)} revenue`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 border-b bg-background text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Customer</th>
+                  <th className="px-3 py-2 text-left">Vehicle</th>
+                  <th className="px-3 py-2 text-left">Stock #</th>
+                  <th className="px-3 py-2 text-right">Price</th>
+                  <th className="px-3 py-2 text-center">Attribution</th>
+                </tr>
+              </thead>
+              <tbody>
+                {sales
+                  .filter(s => vendorSalesView?.id === null ? !s.vendor_id : s.vendor_id === vendorSalesView?.id)
+                  .map(s => (
+                    <tr key={s.id} className="border-b hover:bg-muted/30">
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="px-3 py-2">{s.customer_full_name ?? '—'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
+                      <td className="px-3 py-2 text-right">
+                        {fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}
+                      </td>
+                      <td className="px-3 py-2 text-center">
+                        <AttributionBadge
+                          status={s.attribution_status}
+                          confidence={s.attribution_confidence ?? 0}
+                          manual={s.manual_override}
+                        />
+                      </td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
