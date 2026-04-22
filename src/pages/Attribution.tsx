@@ -118,7 +118,7 @@ export default function AttributionPage() {
   const [leadCounts, setLeadCounts] = useState<Record<string, number>>({});
   const [unattributedLeads, setUnattributedLeads] = useState<number>(0);
   const [sales, setSales] = useState<SaleRow[]>([]);
-  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
+  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [period, setPeriod] = useState<Period>('mtd');
@@ -135,13 +135,13 @@ export default function AttributionPage() {
       .eq('organization_id', activeOrgId).order('name');
     const lQ = supabase.from('leads').select('vendor_id')
       .eq('organization_id', activeOrgId);
-    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
+    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
     if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
     if (untilIso) sQ = sQ.lt('sale_date', untilIso);
 
-    const tQ = supabase.from('sales').select('sale_date, total_gross, gross_revenue')
+    const tQ = supabase.from('sales').select('sale_date, sale_price, total_gross, gross_revenue')
       .eq('organization_id', activeOrgId)
       .gte('sale_date', trendSinceIso);
 
