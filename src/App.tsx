@@ -20,6 +20,7 @@ import InventoryPage from '@/pages/Inventory';
 import InventoryUploadPage from '@/pages/InventoryUpload';
 import AdminOverview from '@/pages/admin/AdminOverview';
 import AdminUsers from '@/pages/admin/AdminUsers';
+import AcceptInvite from '@/pages/AcceptInvite';
 import PortalOverview from '@/pages/admin/portal/PortalOverview';
 import DealershipsList from '@/pages/admin/portal/DealershipsList';
 import DealershipNew from '@/pages/admin/portal/DealershipNew';
@@ -37,6 +38,7 @@ const App = () => (
           <ActiveOrgProvider>
             <Routes>
               <Route path="/auth" element={<AuthPage />} />
+              <Route path="/accept-invite" element={<AcceptInvite />} />
 
               <Route
                 path="/"
