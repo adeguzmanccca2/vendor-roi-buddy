@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
 } from 'lucide-react';
@@ -124,6 +125,7 @@ export default function AttributionPage() {
   const [period, setPeriod] = useState<Period>('all');
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
+  const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
 
   const load = async () => {
     if (!activeOrgId) return;
@@ -429,7 +431,19 @@ export default function AttributionPage() {
                   <tr key={r.vendor?.id ?? 'unassigned'} className="border-b hover:bg-muted/30">
                     <td className="px-4 py-2 font-medium">{r.vendorName}</td>
                     <td className="px-4 py-2 text-right">{r.leads}</td>
-                    <td className="px-4 py-2 text-right">{r.sales}</td>
+                    <td className="px-4 py-2 text-right">
+                      {r.sales > 0 ? (
+                        <button
+                          type="button"
+                          className="font-medium text-primary underline-offset-2 hover:underline"
+                          onClick={() => setVendorSalesView({ id: r.vendor?.id ?? null, name: r.vendorName })}
+                        >
+                          {r.sales}
+                        </button>
+                      ) : (
+                        r.sales
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">{fmtPct(r.closeRate)}</td>
                     <td className="px-4 py-2 text-right">{r.cost > 0 ? fmtMoney(r.cost) : '—'}</td>
                     <td className="px-4 py-2 text-right">{r.cpl > 0 ? fmtMoney(r.cpl) : '—'}</td>
