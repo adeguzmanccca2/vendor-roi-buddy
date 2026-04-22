@@ -34,7 +34,20 @@ interface SaleRow {
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
   stock_number: string | null; deal_number: string | null;
 }
-interface LeadCount { vendor_id: string | null; lead_date: string | null }
+interface LeadRow {
+  id: string;
+  vendor_id: string | null;
+  lead_date: string | null;
+  customer_full_name: string | null;
+  customer_email: string | null;
+  customer_phone: string | null;
+  vehicle_year: number | null;
+  vehicle_make: string | null;
+  vehicle_model: string | null;
+  vin: string | null;
+  source_label: string | null;
+  lead_status: string;
+}
 
 interface VendorPerf {
   vendor: Vendor | null;
@@ -118,6 +131,8 @@ export default function AttributionPage() {
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
+  const [vendorLeadsView, setVendorLeadsView] = useState<{ id: string | null; name: string } | null>(null);
+  const [leads, setLeads] = useState<LeadRow[]>([]);
 
   const load = async () => {
     if (!activeOrgId) return;
@@ -127,8 +142,9 @@ export default function AttributionPage() {
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
       .eq('organization_id', activeOrgId).order('name');
-    let lQ = supabase.from('leads').select('vendor_id, lead_date')
-      .eq('organization_id', activeOrgId);
+    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, source_label, lead_status')
+      .eq('organization_id', activeOrgId)
+      .order('lead_date', { ascending: false });
     if (sinceIso) lQ = lQ.gte('lead_date', sinceIso);
     if (untilIso) lQ = lQ.lt('lead_date', untilIso);
     let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
@@ -143,9 +159,11 @@ export default function AttributionPage() {
 
     const [{ data: vData }, { data: lData }, { data: sData }, { data: tData }] = await Promise.all([vQ, lQ, sQ, tQ]);
     setVendors((vData ?? []) as Vendor[]);
+    const leadRows = (lData ?? []) as LeadRow[];
+    setLeads(leadRows);
     const counts: Record<string, number> = {};
     let unassigned = 0;
-    for (const l of (lData ?? []) as LeadCount[]) {
+    for (const l of leadRows) {
       if (!l.vendor_id) { unassigned++; continue; }
       counts[l.vendor_id] = (counts[l.vendor_id] ?? 0) + 1;
     }
