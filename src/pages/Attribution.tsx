@@ -586,6 +586,56 @@ export default function AttributionPage() {
           </div>
         </DialogContent>
       </Dialog>
+
+      <Dialog open={!!vendorLeadsView} onOpenChange={(o) => !o && setVendorLeadsView(null)}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Leads attributed to {vendorLeadsView?.name}</DialogTitle>
+            <DialogDescription>
+              {(() => {
+                const list = leads.filter(l =>
+                  vendorLeadsView?.id === null ? !l.vendor_id : l.vendor_id === vendorLeadsView?.id
+                );
+                return `${list.length} lead(s)`;
+              })()}
+            </DialogDescription>
+          </DialogHeader>
+          <div className="max-h-[60vh] overflow-auto">
+            <table className="w-full text-sm">
+              <thead className="sticky top-0 border-b bg-background text-xs uppercase text-muted-foreground">
+                <tr>
+                  <th className="px-3 py-2 text-left">Date</th>
+                  <th className="px-3 py-2 text-left">Customer</th>
+                  <th className="px-3 py-2 text-left">Email</th>
+                  <th className="px-3 py-2 text-left">Phone</th>
+                  <th className="px-3 py-2 text-left">Vehicle</th>
+                  <th className="px-3 py-2 text-left">Source</th>
+                  <th className="px-3 py-2 text-left">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                {leads
+                  .filter(l => vendorLeadsView?.id === null ? !l.vendor_id : l.vendor_id === vendorLeadsView?.id)
+                  .map(l => (
+                    <tr key={l.id} className="border-b hover:bg-muted/30">
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
+                      </td>
+                      <td className="px-3 py-2">{l.customer_full_name ?? '—'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{l.customer_email ?? '—'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">{l.customer_phone ?? '—'}</td>
+                      <td className="px-3 py-2 text-muted-foreground">
+                        {[l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || '—'}
+                      </td>
+                      <td className="px-3 py-2 text-muted-foreground">{l.source_label ?? '—'}</td>
+                      <td className="px-3 py-2"><Badge variant="outline">{l.lead_status}</Badge></td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
