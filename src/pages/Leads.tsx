@@ -462,7 +462,7 @@ export default function LeadsPage() {
           ) : sorted.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No leads match.</p>
           ) : (
-            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto rounded-md border border-border">
+            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-y-auto scrollbar-x-always rounded-md border border-border">
               <Table className="min-w-[1400px]">
                 <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
