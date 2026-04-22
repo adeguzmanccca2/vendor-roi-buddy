@@ -380,8 +380,8 @@ export default function UploadPage() {
                 <div key={f.key} className="grid gap-1">
                   <Label className="text-xs">{f.label}</Label>
                   <Select
-                    value={mapping[f.key] ?? NONE}
-                    onValueChange={v => setMapping(prev => ({ ...prev, [f.key]: v === NONE ? '' : v }))}
+                    value={mapping[f.key] || NONE}
+                    onValueChange={v => setMapping(prev => ({ ...prev, [f.key]: v }))}
                   >
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
