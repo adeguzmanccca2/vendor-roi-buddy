@@ -125,12 +125,16 @@ export default function UploadPage() {
       const veh = get(row, 'vehicle');
       const vin = get(row, 'vin');
       const parsed = parseVehicle(veh);
-      const { first, last } = splitName(fullName);
+      // Only auto-split full name when first/last columns are NOT explicitly mapped.
+      // If user set First/Last to "Skip", treat them as intentionally empty.
+      const firstMapped = mapping['first_name'] && mapping['first_name'] !== NONE;
+      const lastMapped = mapping['last_name'] && mapping['last_name'] !== NONE;
+      const { first, last } = (!firstMapped && !lastMapped) ? splitName(fullName) : { first: '', last: '' };
       const yearRaw = get(row, 'year');
       const yearNum = yearRaw ? parseInt(yearRaw, 10) : NaN;
       return {
-        customer_first_name: first || get(row, 'first_name') || null,
-        customer_last_name: last || get(row, 'last_name') || null,
+        customer_first_name: firstMapped ? (get(row, 'first_name') || null) : (first || null),
+        customer_last_name: lastMapped ? (get(row, 'last_name') || null) : (last || null),
         customer_full_name: fullName || null,
         customer_email: email || null,
         customer_phone: phone || null,
@@ -227,7 +231,9 @@ export default function UploadPage() {
         const normEmail = normalizeEmail(email);
         const normPhone = normalizePhone(phone);
         const parsed = parseVehicle(veh);
-        const { first, last } = splitName(fullName);
+        const firstMapped = mapping['first_name'] && mapping['first_name'] !== NONE;
+        const lastMapped = mapping['last_name'] && mapping['last_name'] !== NONE;
+        const { first, last } = (!firstMapped && !lastMapped) ? splitName(fullName) : { first: '', last: '' };
 
         // Prefer explicit Year/Make/Model columns; fall back to parsed VOI text
         const yearRaw = get(row, 'year');
@@ -259,8 +265,8 @@ export default function UploadPage() {
           organization_id: activeOrgId,
           vendor_id: vendorId === NONE ? null : vendorId,
           raw_upload_id: upload.id,
-          customer_first_name: first || get(row, 'first_name') || null,
-          customer_last_name: last || get(row, 'last_name') || null,
+          customer_first_name: firstMapped ? (get(row, 'first_name') || null) : (first || null),
+          customer_last_name: lastMapped ? (get(row, 'last_name') || null) : (last || null),
           customer_full_name: fullName || null,
           customer_email: email || null,
           customer_phone: phone || null,
