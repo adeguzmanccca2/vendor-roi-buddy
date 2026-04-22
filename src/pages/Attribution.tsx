@@ -26,6 +26,7 @@ interface SaleRow {
   normalized_phone: string | null;
   organization_id: string;
   sale_date: string | null;
+  sale_price: number | null;
   total_gross: number | null; gross_revenue: number | null;
   attribution_status: string; attribution_confidence: number | null;
   manual_override: boolean;
@@ -117,7 +118,7 @@ export default function AttributionPage() {
   const [leadCounts, setLeadCounts] = useState<Record<string, number>>({});
   const [unattributedLeads, setUnattributedLeads] = useState<number>(0);
   const [sales, setSales] = useState<SaleRow[]>([]);
-  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
+  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
   const [period, setPeriod] = useState<Period>('mtd');
@@ -134,13 +135,13 @@ export default function AttributionPage() {
       .eq('organization_id', activeOrgId).order('name');
     const lQ = supabase.from('leads').select('vendor_id')
       .eq('organization_id', activeOrgId);
-    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
+    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
     if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
     if (untilIso) sQ = sQ.lt('sale_date', untilIso);
 
-    const tQ = supabase.from('sales').select('sale_date, total_gross, gross_revenue')
+    const tQ = supabase.from('sales').select('sale_date, sale_price, total_gross, gross_revenue')
       .eq('organization_id', activeOrgId)
       .gte('sale_date', trendSinceIso);
 
@@ -168,7 +169,7 @@ export default function AttributionPage() {
     for (const s of sales) {
       const key = s.vendor_id;
       const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
-      cur.revenue += Number(s.total_gross ?? s.gross_revenue ?? 0);
+      cur.revenue += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
       cur.sales += 1;
       byVendor.set(key, cur);
     }
@@ -204,7 +205,7 @@ export default function AttributionPage() {
     // Revenue & sales count come straight from the filtered sales array so
     // orphaned vendor_ids (vendor deleted) still contribute to the total.
     const revenue = sales.reduce(
-      (a, s) => a + Number(s.total_gross ?? s.gross_revenue ?? 0),
+      (a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0),
       0,
     );
     const salesCount = sales.length;
@@ -232,7 +233,7 @@ export default function AttributionPage() {
       if (!s.sale_date) continue;
       const d = new Date(s.sale_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.total_gross ?? s.gross_revenue ?? 0);
+      if (key in buckets) buckets[key] += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
     }
     return Object.entries(buckets).map(([month, revenue]) => ({
       month: month.slice(5) + '/' + month.slice(2, 4),
@@ -289,7 +290,7 @@ export default function AttributionPage() {
       vehicle: [s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' '),
       stock_number: s.stock_number ?? '',
       deal_number: s.deal_number ?? '',
-      gross: Number(s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
+      gross: Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
       vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution: s.attribution_status,
       confidence: s.attribution_confidence ?? '',
@@ -471,7 +472,7 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 text-muted-foreground">
                       {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
                     </td>
-                    <td className="px-4 py-2 text-right">{fmtMoney(Number(s.total_gross ?? s.gross_revenue ?? 0))}</td>
+                    <td className="px-4 py-2 text-right">{fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}</td>
                     <td className="px-4 py-2 text-center">
                       <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
                     </td>
