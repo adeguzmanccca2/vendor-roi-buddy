@@ -467,6 +467,21 @@ export default function SalesPage() {
       )}
 
       <Card>
+        <CardHeader className="pb-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
+            <CardTitle className="text-base">All Sales</CardTitle>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="rounded-md border border-border bg-muted px-2 py-1 font-medium text-foreground">
+                {filtered.length.toLocaleString()} {filtered.length === 1 ? 'record' : 'records'}
+              </span>
+              {filtered.length !== sales.length && (
+                <span className="text-muted-foreground">
+                  of {sales.length.toLocaleString()} total
+                </span>
+              )}
+            </div>
+          </div>
+        </CardHeader>
         <CardContent className="p-0">
           {/* Single scroll container (the Table component's own wrapper div) — handles BOTH axes */}
           <div className="[&>div]:max-h-[calc(100vh-380px)] [&>div]:min-h-[300px] [&>div]:overflow-auto">

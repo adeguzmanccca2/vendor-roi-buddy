@@ -414,7 +414,17 @@ export default function LeadsPage() {
       <Card>
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-3">
-            <CardTitle>All Leads ({filtered.length} of {leads.length})</CardTitle>
+            <div className="flex items-center gap-2">
+              <CardTitle>All Leads</CardTitle>
+              <span className="rounded-md border border-border bg-muted px-2 py-1 text-sm font-medium text-foreground">
+                {filtered.length.toLocaleString()} {filtered.length === 1 ? 'record' : 'records'}
+              </span>
+              {filtered.length !== leads.length && (
+                <span className="text-sm text-muted-foreground">
+                  of {leads.length.toLocaleString()} total
+                </span>
+              )}
+            </div>
             <div className="flex flex-wrap gap-2">
               <Input
                 placeholder="Search anything…"
