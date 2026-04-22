@@ -102,3 +102,22 @@ All colors MUST be HSL.
     @apply bg-background text-foreground;
   }
 }
+
+@layer utilities {
+  /* Force a persistent horizontal scrollbar (overrides macOS overlay scrollbars) */
+  .scrollbar-x-always {
+    overflow-x: scroll;
+    scrollbar-gutter: stable;
+  }
+  .scrollbar-x-always::-webkit-scrollbar {
+    height: 10px;
+    -webkit-appearance: none;
+  }
+  .scrollbar-x-always::-webkit-scrollbar-thumb {
+    background-color: hsl(var(--muted-foreground) / 0.4);
+    border-radius: 8px;
+  }
+  .scrollbar-x-always::-webkit-scrollbar-track {
+    background-color: hsl(var(--muted));
+  }
+}
