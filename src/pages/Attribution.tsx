@@ -437,7 +437,19 @@ export default function AttributionPage() {
                 {perf.map(r => (
                   <tr key={r.vendor?.id ?? 'unassigned'} className="border-b hover:bg-muted/30">
                     <td className="px-4 py-2 font-medium">{r.vendorName}</td>
-                    <td className="px-4 py-2 text-right">{r.leads}</td>
+                    <td className="px-4 py-2 text-right">
+                      {r.leads > 0 ? (
+                        <button
+                          type="button"
+                          className="font-medium text-primary underline-offset-2 hover:underline"
+                          onClick={() => setVendorLeadsView({ id: r.vendor?.id ?? null, name: r.vendorName })}
+                        >
+                          {r.leads}
+                        </button>
+                      ) : (
+                        r.leads
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">
                       {r.sales > 0 ? (
                         <button
