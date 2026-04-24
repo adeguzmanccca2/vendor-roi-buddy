@@ -31,8 +31,8 @@ function rangeFor(p: Period): { from: Date | null; costMultiplier: number; label
 
 interface Org { id: string; name: string; status: string }
 interface Vendor { id: string; name: string; organization_id: string; monthly_cost: number | null; is_active: boolean }
-interface Lead { id: string; organization_id: string; vendor_id: string | null; lead_date: string | null; created_at: string }
-interface Sale { id: string; organization_id: string; vendor_id: string | null; total_gross: number | null; gross_revenue: number | null; sale_date: string | null }
+interface Lead { id: string; organization_id: string; vendor_id: string | null; lead_date: string | null; created_at: string; vin: string | null }
+interface Sale { id: string; organization_id: string; vendor_id: string | null; total_gross: number | null; gross_revenue: number | null; sale_price: number | null; sale_date: string | null; vin: string | null }
 
 interface OrgRow {
   id: string;
