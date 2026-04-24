@@ -38,6 +38,7 @@ interface LeadRow {
   id: string;
   vendor_id: string | null;
   lead_date: string | null;
+  created_at: string;
   customer_full_name: string | null;
   customer_email: string | null;
   customer_phone: string | null;
@@ -47,6 +48,15 @@ interface LeadRow {
   vin: string | null;
   source_label: string | null;
   lead_status: string;
+}
+
+// Single source of truth for "what counts as revenue from a sale".
+// Per project rule: ROI uses front + back gross (true dealer profit),
+// not sticker/sale price. Falls back to gross_revenue, then 0.
+function saleRevenue(s: { total_gross?: number | null; gross_revenue?: number | null }): number {
+  const tg = Number(s.total_gross ?? 0);
+  if (tg) return tg;
+  return Number(s.gross_revenue ?? 0);
 }
 
 interface VendorPerf {
@@ -142,11 +152,16 @@ export default function AttributionPage() {
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
       .eq('organization_id', activeOrgId).order('name');
-    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, source_label, lead_status')
+    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, source_label, lead_status')
       .eq('organization_id', activeOrgId)
       .order('lead_date', { ascending: false });
-    if (sinceIso) lQ = lQ.gte('lead_date', sinceIso);
-    if (untilIso) lQ = lQ.lt('lead_date', untilIso);
+    // Bucket leads with no lead_date by created_at — otherwise they're invisible.
+    if (sinceIso && untilIso) {
+      lQ = lQ.or(
+        `and(lead_date.gte.${sinceIso},lead_date.lt.${untilIso}),` +
+        `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
+      );
+    }
     let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
@@ -179,11 +194,15 @@ export default function AttributionPage() {
   const months = periodMonths(period);
 
   const perf: VendorPerf[] = useMemo(() => {
+    // Build a quick lookup so we can tell "real org vendor" from orphan vendor_ids.
+    const knownVendorIds = new Set(vendors.map(v => v.id));
     const byVendor = new Map<string | null, { revenue: number; sales: number }>();
     for (const s of sales) {
-      const key = s.vendor_id;
+      // Orphan vendor_id (vendor deleted or wrong org) → bucket as Unassigned
+      // so per-vendor rows sum back to top-line totals.
+      const key = s.vendor_id && knownVendorIds.has(s.vendor_id) ? s.vendor_id : null;
       const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
-      cur.revenue += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
+      cur.revenue += saleRevenue(s);
       cur.sales += 1;
       byVendor.set(key, cur);
     }
@@ -216,14 +235,9 @@ export default function AttributionPage() {
   }, [vendors, sales, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
-    // Revenue & sales count come straight from the filtered sales array so
-    // orphaned vendor_ids (vendor deleted) still contribute to the total.
-    const revenue = sales.reduce(
-      (a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0),
-      0,
-    );
+    // Top-line uses raw sales array — guarantees orphan vendor_ids still count.
+    const revenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
     const salesCount = sales.length;
-    // Cost & leads still come from per-vendor perf rows (only known vendors have cost).
     const cost = perf.reduce((a, r) => a + r.cost, 0);
     const leads = perf.reduce((a, r) => a + r.leads, 0);
     return {
@@ -247,7 +261,7 @@ export default function AttributionPage() {
       if (!s.sale_date) continue;
       const d = new Date(s.sale_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
+      if (key in buckets) buckets[key] += saleRevenue(s);
     }
     return Object.entries(buckets).map(([month, revenue]) => ({
       month: month.slice(5) + '/' + month.slice(2, 4),
@@ -304,7 +318,7 @@ export default function AttributionPage() {
       vehicle: [s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' '),
       stock_number: s.stock_number ?? '',
       deal_number: s.deal_number ?? '',
-      gross: Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
+      gross: saleRevenue(s).toFixed(2),
       vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution: s.attribution_status,
       confidence: s.attribution_confidence ?? '',
@@ -313,7 +327,9 @@ export default function AttributionPage() {
     downloadCsv(`sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
 
-  const matchedSales = sales.filter(s => s.attribution_status === 'auto' || s.attribution_status === 'manual').length;
+  // A sale is "matched" once it's been linked to either a lead or a vendor
+  // (auto, manual, or via override). Status alone misses sales attributed by vendor only.
+  const matchedSales = sales.filter(s => !!s.lead_id || !!s.vendor_id).length;
   const matchRate = sales.length > 0 ? matchedSales / sales.length : 0;
 
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership first.</p>;
@@ -505,7 +521,7 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 text-muted-foreground">
                       {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
                     </td>
-                    <td className="px-4 py-2 text-right">{fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}</td>
+                    <td className="px-4 py-2 text-right">{fmtMoney(saleRevenue(s))}</td>
                     <td className="px-4 py-2 text-center">
                       <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
                     </td>
@@ -539,7 +555,7 @@ export default function AttributionPage() {
                 const list = sales.filter(s =>
                   vendorSalesView?.id === null ? !s.vendor_id : s.vendor_id === vendorSalesView?.id
                 );
-                const rev = list.reduce((a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0), 0);
+                const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
                 return `${list.length} sale(s) · ${fmtMoney(rev)} revenue`;
               })()}
             </DialogDescription>
@@ -570,7 +586,7 @@ export default function AttributionPage() {
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
                       <td className="px-3 py-2 text-right">
-                        {fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}
+                        {fmtMoney(saleRevenue(s))}
                       </td>
                       <td className="px-3 py-2 text-center">
                         <AttributionBadge
