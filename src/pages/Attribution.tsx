@@ -163,7 +163,7 @@ export default function AttributionPage() {
         `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
       );
     }
-    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
+    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
     if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
