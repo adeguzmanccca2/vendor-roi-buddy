@@ -194,11 +194,15 @@ export default function AttributionPage() {
   const months = periodMonths(period);
 
   const perf: VendorPerf[] = useMemo(() => {
+    // Build a quick lookup so we can tell "real org vendor" from orphan vendor_ids.
+    const knownVendorIds = new Set(vendors.map(v => v.id));
     const byVendor = new Map<string | null, { revenue: number; sales: number }>();
     for (const s of sales) {
-      const key = s.vendor_id;
+      // Orphan vendor_id (vendor deleted or wrong org) → bucket as Unassigned
+      // so per-vendor rows sum back to top-line totals.
+      const key = s.vendor_id && knownVendorIds.has(s.vendor_id) ? s.vendor_id : null;
       const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
-      cur.revenue += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
+      cur.revenue += saleRevenue(s);
       cur.sales += 1;
       byVendor.set(key, cur);
     }
@@ -231,14 +235,9 @@ export default function AttributionPage() {
   }, [vendors, sales, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
-    // Revenue & sales count come straight from the filtered sales array so
-    // orphaned vendor_ids (vendor deleted) still contribute to the total.
-    const revenue = sales.reduce(
-      (a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0),
-      0,
-    );
+    // Top-line uses raw sales array — guarantees orphan vendor_ids still count.
+    const revenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
     const salesCount = sales.length;
-    // Cost & leads still come from per-vendor perf rows (only known vendors have cost).
     const cost = perf.reduce((a, r) => a + r.cost, 0);
     const leads = perf.reduce((a, r) => a + r.leads, 0);
     return {
