@@ -263,7 +263,7 @@ export default function AttributionPage() {
       });
     }
     return rows.sort((a, b) => b.revenue - a.revenue);
-  }, [vendors, sales, leadCounts, unattributedLeads, months]);
+  }, [vendors, sales, leads, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
     // Top-line uses raw sales array — guarantees orphan vendor_ids still count.
