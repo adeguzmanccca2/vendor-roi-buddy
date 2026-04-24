@@ -318,7 +318,7 @@ export default function AttributionPage() {
       vehicle: [s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' '),
       stock_number: s.stock_number ?? '',
       deal_number: s.deal_number ?? '',
-      gross: Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0).toFixed(2),
+      gross: saleRevenue(s).toFixed(2),
       vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution: s.attribution_status,
       confidence: s.attribution_confidence ?? '',
