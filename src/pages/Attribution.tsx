@@ -579,58 +579,93 @@ export default function AttributionPage() {
 
       <Dialog open={!!vendorSalesView} onOpenChange={(o) => !o && setVendorSalesView(null)}>
         <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Sales attributed to {vendorSalesView?.name}</DialogTitle>
-            <DialogDescription>
-              {(() => {
-                const list = sales.filter(s =>
-                  vendorSalesView?.id === null ? !s.vendor_id : s.vendor_id === vendorSalesView?.id
-                );
-                const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
-                return `${list.length} sale(s) · ${fmtMoney(rev)} revenue`;
-              })()}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 border-b bg-background text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Customer</th>
-                  <th className="px-3 py-2 text-left">Vehicle</th>
-                  <th className="px-3 py-2 text-left">Stock #</th>
-                  <th className="px-3 py-2 text-right">Price</th>
-                  <th className="px-3 py-2 text-center">Attribution</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sales
-                  .filter(s => vendorSalesView?.id === null ? !s.vendor_id : s.vendor_id === vendorSalesView?.id)
-                  .map(s => (
-                    <tr key={s.id} className="border-b hover:bg-muted/30">
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
-                      </td>
-                      <td className="px-3 py-2">{s.customer_full_name ?? '—'}</td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
-                      <td className="px-3 py-2 text-right">
-                        {fmtMoney(saleRevenue(s))}
-                      </td>
-                      <td className="px-3 py-2 text-center">
-                        <AttributionBadge
-                          status={s.attribution_status}
-                          confidence={s.attribution_confidence ?? 0}
-                          manual={s.manual_override}
-                        />
-                      </td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          {(() => {
+            // Match the perf-table logic: a sale belongs to a vendor when its VIN
+            // matches a VIN on one of that vendor's leads. Falls back to vendor_id
+            // for the "Unassigned" bucket and when no VIN match exists.
+            const vendorVins = new Set<string>();
+            if (vendorSalesView?.id) {
+              for (const l of leads) {
+                if (l.vendor_id !== vendorSalesView.id || !l.vin) continue;
+                const v = l.vin.trim().toUpperCase();
+                if (v) vendorVins.add(v);
+              }
+            }
+            const allVinToVendors = new Map<string, Set<string>>();
+            for (const l of leads) {
+              if (!l.vin || !l.vendor_id) continue;
+              const v = l.vin.trim().toUpperCase();
+              if (!v) continue;
+              const set = allVinToVendors.get(v) ?? new Set<string>();
+              set.add(l.vendor_id);
+              allVinToVendors.set(v, set);
+            }
+            const list = sales.filter(s => {
+              const vin = s.vin ? s.vin.trim().toUpperCase() : '';
+              if (vendorSalesView?.id === null) {
+                // Unassigned bucket = no VIN match AND no known vendor_id
+                const matched = vin ? allVinToVendors.get(vin) : undefined;
+                return !matched && !s.vendor_id;
+              }
+              return vin && vendorVins.has(vin);
+            });
+            const rev = list.reduce((a, s) => a + Number(s.sale_price ?? 0), 0);
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Sales attributed to {vendorSalesView?.name}</DialogTitle>
+                  <DialogDescription>
+                    {list.length} sale(s) · {fmtMoney(rev)} total price
+                  </DialogDescription>
+                </DialogHeader>
+                <div className="max-h-[60vh] overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 border-b bg-background text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Customer</th>
+                        <th className="px-3 py-2 text-left">VIN</th>
+                        <th className="px-3 py-2 text-left">Vehicle</th>
+                        <th className="px-3 py-2 text-left">Stock #</th>
+                        <th className="px-3 py-2 text-right">Price</th>
+                        <th className="px-3 py-2 text-center">Attribution</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.map(s => (
+                        <tr key={s.id} className="border-b hover:bg-muted/30">
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
+                          </td>
+                          <td className="px-3 py-2">{s.customer_full_name ?? '—'}</td>
+                          <td className="px-3 py-2 text-muted-foreground font-mono text-xs">{s.vin ?? '—'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">
+                            {[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}
+                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
+                          <td className="px-3 py-2 text-right">{fmtMoney(Number(s.sale_price ?? 0))}</td>
+                          <td className="px-3 py-2 text-center">
+                            <AttributionBadge
+                              status={s.attribution_status}
+                              confidence={s.attribution_confidence ?? 0}
+                              manual={s.manual_override}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                      {list.length === 0 && (
+                        <tr>
+                          <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">
+                            No sales matched this vendor's lead VINs in the selected period.
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            );
+          })()}
         </DialogContent>
       </Dialog>
 
