@@ -33,6 +33,7 @@ interface SaleRow {
   manual_override: boolean;
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
   stock_number: string | null; deal_number: string | null;
+  vin: string | null;
 }
 interface LeadRow {
   id: string;
@@ -162,7 +163,7 @@ export default function AttributionPage() {
         `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
       );
     }
-    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
+    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
     if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
@@ -196,15 +197,45 @@ export default function AttributionPage() {
   const perf: VendorPerf[] = useMemo(() => {
     // Build a quick lookup so we can tell "real org vendor" from orphan vendor_ids.
     const knownVendorIds = new Set(vendors.map(v => v.id));
+
+    // VIN → set of vendor_ids that had a lead on this VIN.
+    // Revenue per vendor = Σ sale_price for sales whose VIN appears in that vendor's leads.
+    const vinToVendors = new Map<string, Set<string>>();
+    for (const l of leads) {
+      if (!l.vin || !l.vendor_id) continue;
+      const key = l.vin.trim().toUpperCase();
+      if (!key) continue;
+      const set = vinToVendors.get(key) ?? new Set<string>();
+      set.add(l.vendor_id);
+      vinToVendors.set(key, set);
+    }
+
     const byVendor = new Map<string | null, { revenue: number; sales: number }>();
     for (const s of sales) {
-      // Orphan vendor_id (vendor deleted or wrong org) → bucket as Unassigned
-      // so per-vendor rows sum back to top-line totals.
-      const key = s.vendor_id && knownVendorIds.has(s.vendor_id) ? s.vendor_id : null;
-      const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
-      cur.revenue += saleRevenue(s);
-      cur.sales += 1;
-      byVendor.set(key, cur);
+      const vinKey = s as unknown as { vin?: string | null };
+      const vin = vinKey.vin ? String(vinKey.vin).trim().toUpperCase() : '';
+      const vinVendors = vin ? vinToVendors.get(vin) : undefined;
+
+      // Count sale toward each vendor whose lead VIN matches.
+      if (vinVendors && vinVendors.size > 0) {
+        for (const vid of vinVendors) {
+          const cur = byVendor.get(vid) ?? { revenue: 0, sales: 0 };
+          cur.revenue += Number(s.sale_price ?? 0);
+          cur.sales += 1;
+          byVendor.set(vid, cur);
+        }
+      } else {
+        // Fall back to the sale's own vendor_id (legacy attribution) for orphan-bucketing only.
+        const key = s.vendor_id && knownVendorIds.has(s.vendor_id) ? s.vendor_id : null;
+        if (key === null) {
+          const cur = byVendor.get(null) ?? { revenue: 0, sales: 0 };
+          cur.revenue += Number(s.sale_price ?? 0);
+          cur.sales += 1;
+          byVendor.set(null, cur);
+        }
+        // If sale has a known vendor_id but no VIN match, do NOT credit revenue —
+        // user explicitly defined revenue as VIN-matched sale_price only.
+      }
     }
     const rows: VendorPerf[] = vendors.map(v => {
       const agg = byVendor.get(v.id) ?? { revenue: 0, sales: 0 };
@@ -232,7 +263,7 @@ export default function AttributionPage() {
       });
     }
     return rows.sort((a, b) => b.revenue - a.revenue);
-  }, [vendors, sales, leadCounts, unattributedLeads, months]);
+  }, [vendors, sales, leads, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
     // Top-line uses raw sales array — guarantees orphan vendor_ids still count.

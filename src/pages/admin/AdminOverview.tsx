@@ -31,8 +31,8 @@ function rangeFor(p: Period): { from: Date | null; costMultiplier: number; label
 
 interface Org { id: string; name: string; status: string }
 interface Vendor { id: string; name: string; organization_id: string; monthly_cost: number | null; is_active: boolean }
-interface Lead { id: string; organization_id: string; vendor_id: string | null; lead_date: string | null; created_at: string }
-interface Sale { id: string; organization_id: string; vendor_id: string | null; total_gross: number | null; gross_revenue: number | null; sale_date: string | null }
+interface Lead { id: string; organization_id: string; vendor_id: string | null; lead_date: string | null; created_at: string; vin: string | null }
+interface Sale { id: string; organization_id: string; vendor_id: string | null; total_gross: number | null; gross_revenue: number | null; sale_price: number | null; sale_date: string | null; vin: string | null }
 
 interface OrgRow {
   id: string;
@@ -79,10 +79,10 @@ export default function AdminOverview() {
         supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role', 'admin'),
       ]);
 
-      let leadQ = supabase.from('leads').select('id, organization_id, vendor_id, lead_date, created_at').limit(10000);
+      let leadQ = supabase.from('leads').select('id, organization_id, vendor_id, lead_date, created_at, vin').limit(10000);
       let saleQ = supabase
         .from('sales')
-        .select('id, organization_id, vendor_id, total_gross, gross_revenue, sale_date')
+        .select('id, organization_id, vendor_id, total_gross, gross_revenue, sale_price, sale_date, vin')
         .limit(10000);
       if (fromIso) {
         leadQ = leadQ.or(`lead_date.gte.${fromIso},and(lead_date.is.null,created_at.gte.${fromIso})`);
@@ -136,17 +136,55 @@ export default function AdminOverview() {
       byName.set(key, entry);
     });
 
+    // Build vendor_id → its org_id and (org_id, VIN) → set of vendor_ids that had a lead on it.
+    const vendorOrg = new Map<string, string>();
+    vendors.forEach(v => vendorOrg.set(v.id, v.organization_id));
+
+    const vinKeyToVendors = new Map<string, Set<string>>(); // key = `${org_id}::${VIN_UPPER}`
+    for (const l of leads) {
+      if (!l.vin || !l.vendor_id) continue;
+      const vin = l.vin.trim().toUpperCase();
+      if (!vin) continue;
+      const k = `${l.organization_id}::${vin}`;
+      const set = vinKeyToVendors.get(k) ?? new Set<string>();
+      set.add(l.vendor_id);
+      vinKeyToVendors.set(k, set);
+    }
+
+    // Per-vendor (id) accumulator: matched sales count + revenue (sale_price).
+    const perVendor = new Map<string, { sales: number; revenue: number }>();
+    for (const s of sales) {
+      if (!s.vin) continue;
+      const vin = s.vin.trim().toUpperCase();
+      if (!vin) continue;
+      const matchedVendors = vinKeyToVendors.get(`${s.organization_id}::${vin}`);
+      if (!matchedVendors) continue;
+      for (const vid of matchedVendors) {
+        const cur = perVendor.get(vid) ?? { sales: 0, revenue: 0 };
+        cur.sales += 1;
+        cur.revenue += Number(s.sale_price ?? 0);
+        perVendor.set(vid, cur);
+      }
+    }
+
     const rows: VendorRow[] = [];
     byName.forEach((entry, name) => {
       const leadCount = leads.filter(l => l.vendor_id && entry.vendor_ids.has(l.vendor_id)).length;
-      const salesArr = sales.filter(s => s.vendor_id && entry.vendor_ids.has(s.vendor_id));
-      const revenue = salesArr.reduce((s, x) => s + Number(x.total_gross ?? x.gross_revenue ?? 0), 0);
+      let salesCount = 0;
+      let revenue = 0;
+      entry.vendor_ids.forEach(vid => {
+        const agg = perVendor.get(vid);
+        if (agg) {
+          salesCount += agg.sales;
+          revenue += agg.revenue;
+        }
+      });
       const roi = entry.spend > 0 ? (revenue - entry.spend) / entry.spend : 0;
       rows.push({
         vendor_name: name,
         org_count: entry.org_ids.size,
         leads: leadCount,
-        sales: salesArr.length,
+        sales: salesCount,
         spend: entry.spend,
         revenue,
         roi,
