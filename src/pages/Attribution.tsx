@@ -33,6 +33,7 @@ interface SaleRow {
   manual_override: boolean;
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
   stock_number: string | null; deal_number: string | null;
+  vin: string | null;
 }
 interface LeadRow {
   id: string;
