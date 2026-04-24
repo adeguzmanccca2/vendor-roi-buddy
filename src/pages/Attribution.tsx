@@ -261,7 +261,7 @@ export default function AttributionPage() {
       if (!s.sale_date) continue;
       const d = new Date(s.sale_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0);
+      if (key in buckets) buckets[key] += saleRevenue(s);
     }
     return Object.entries(buckets).map(([month, revenue]) => ({
       month: month.slice(5) + '/' + month.slice(2, 4),
