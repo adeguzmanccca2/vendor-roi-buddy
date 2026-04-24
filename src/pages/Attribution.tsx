@@ -152,11 +152,21 @@ export default function AttributionPage() {
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
       .eq('organization_id', activeOrgId).order('name');
-    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, source_label, lead_status')
+    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, source_label, lead_status')
       .eq('organization_id', activeOrgId)
       .order('lead_date', { ascending: false });
-    if (sinceIso) lQ = lQ.gte('lead_date', sinceIso);
-    if (untilIso) lQ = lQ.lt('lead_date', untilIso);
+    // Bucket leads with no lead_date by created_at — otherwise they're invisible.
+    if (sinceIso && untilIso) {
+      lQ = lQ.or(
+        `and(lead_date.gte.${sinceIso},lead_date.lt.${untilIso}),` +
+        `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
+      );
+    }
+    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
+      .eq('organization_id', activeOrgId)
+      .order('sale_date', { ascending: false });
+    if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
+    if (untilIso) sQ = sQ.lt('sale_date', untilIso);
     let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number')
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false });
