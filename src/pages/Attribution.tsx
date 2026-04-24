@@ -327,7 +327,9 @@ export default function AttributionPage() {
     downloadCsv(`sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
 
-  const matchedSales = sales.filter(s => s.attribution_status === 'auto' || s.attribution_status === 'manual').length;
+  // A sale is "matched" once it's been linked to either a lead or a vendor
+  // (auto, manual, or via override). Status alone misses sales attributed by vendor only.
+  const matchedSales = sales.filter(s => !!s.lead_id || !!s.vendor_id).length;
   const matchRate = sales.length > 0 ? matchedSales / sales.length : 0;
 
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership first.</p>;
