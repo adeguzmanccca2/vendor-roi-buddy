@@ -38,6 +38,7 @@ interface LeadRow {
   id: string;
   vendor_id: string | null;
   lead_date: string | null;
+  created_at: string;
   customer_full_name: string | null;
   customer_email: string | null;
   customer_phone: string | null;
@@ -47,6 +48,15 @@ interface LeadRow {
   vin: string | null;
   source_label: string | null;
   lead_status: string;
+}
+
+// Single source of truth for "what counts as revenue from a sale".
+// Per project rule: ROI uses front + back gross (true dealer profit),
+// not sticker/sale price. Falls back to gross_revenue, then 0.
+function saleRevenue(s: { total_gross?: number | null; gross_revenue?: number | null }): number {
+  const tg = Number(s.total_gross ?? 0);
+  if (tg) return tg;
+  return Number(s.gross_revenue ?? 0);
 }
 
 interface VendorPerf {
