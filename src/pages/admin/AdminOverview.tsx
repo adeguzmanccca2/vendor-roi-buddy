@@ -79,10 +79,10 @@ export default function AdminOverview() {
         supabase.from('user_roles').select('*', { count: 'exact', head: true }).eq('role', 'admin'),
       ]);
 
-      let leadQ = supabase.from('leads').select('id, organization_id, vendor_id, lead_date, created_at').limit(10000);
+      let leadQ = supabase.from('leads').select('id, organization_id, vendor_id, lead_date, created_at, vin').limit(10000);
       let saleQ = supabase
         .from('sales')
-        .select('id, organization_id, vendor_id, total_gross, gross_revenue, sale_date')
+        .select('id, organization_id, vendor_id, total_gross, gross_revenue, sale_price, sale_date, vin')
         .limit(10000);
       if (fromIso) {
         leadQ = leadQ.or(`lead_date.gte.${fromIso},and(lead_date.is.null,created_at.gte.${fromIso})`);
