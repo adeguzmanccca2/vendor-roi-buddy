@@ -521,7 +521,7 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 text-muted-foreground">
                       {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
                     </td>
-                    <td className="px-4 py-2 text-right">{fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}</td>
+                    <td className="px-4 py-2 text-right">{fmtMoney(saleRevenue(s))}</td>
                     <td className="px-4 py-2 text-center">
                       <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
                     </td>
@@ -555,7 +555,7 @@ export default function AttributionPage() {
                 const list = sales.filter(s =>
                   vendorSalesView?.id === null ? !s.vendor_id : s.vendor_id === vendorSalesView?.id
                 );
-                const rev = list.reduce((a, s) => a + Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0), 0);
+                const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
                 return `${list.length} sale(s) · ${fmtMoney(rev)} revenue`;
               })()}
             </DialogDescription>
@@ -586,7 +586,7 @@ export default function AttributionPage() {
                       </td>
                       <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
                       <td className="px-3 py-2 text-right">
-                        {fmtMoney(Number(s.sale_price ?? s.total_gross ?? s.gross_revenue ?? 0))}
+                        {fmtMoney(saleRevenue(s))}
                       </td>
                       <td className="px-3 py-2 text-center">
                         <AttributionBadge
