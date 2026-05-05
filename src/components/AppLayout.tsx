@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Users, LogOut, Shield, Store, ListChecks, TrendingUp, GitBranch, Car, Receipt } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, GitBranch, Car, Receipt } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
@@ -15,6 +15,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
   const adminLinks = [
     { to: '/admin', label: 'Overview', icon: LayoutDashboard, end: true },
+    { to: '/admin/portal/dealerships', label: 'Dealerships', icon: Building2 },
     { to: '/admin/users', label: 'Users', icon: Users },
     { to: '/vendors', label: 'Vendors', icon: Store },
     { to: '/leads', label: 'Leads', icon: ListChecks },
