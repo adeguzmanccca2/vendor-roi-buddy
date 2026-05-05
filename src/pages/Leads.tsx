@@ -127,7 +127,9 @@ export default function LeadsPage() {
   useEffect(() => { load(); }, [activeOrgId]);
 
   const vehicleStr = (l: Lead) =>
-    [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || l.vehicle_of_interest || '';
+    l.vehicle_of_interest ||
+    [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') ||
+    '';
 
   const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
