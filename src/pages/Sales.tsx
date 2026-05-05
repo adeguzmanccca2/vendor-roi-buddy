@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Link } from 'react-router-dom';
+
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -22,7 +22,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Pencil, Trash2, Upload, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Pencil, Trash2, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { normalizePhone, normalizeEmail } from '@/lib/normalize';
 import { toast } from 'sonner';
@@ -437,9 +437,6 @@ export default function SalesPage() {
           </Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
-          </Button>
-          <Button asChild size="sm">
-            <Link to="/sales/upload"><Upload className="mr-2 h-4 w-4" /> Upload sales</Link>
           </Button>
         </div>
       </div>
