@@ -24,6 +24,7 @@ import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Pencil, Trash2, Upload, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
+import { normalizePhone, normalizeEmail } from '@/lib/normalize';
 import { toast } from 'sonner';
 
 interface Sale {
@@ -123,6 +124,8 @@ export default function SalesPage() {
   const [confirmDelete, setConfirmDelete] = useState<{ ids: string[]; label: string } | null>(null);
   const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+  const [leadMatches, setLeadMatches] = useState<Map<string, string | null> | null>(null);
+  const [matching, setMatching] = useState(false);
 
   const vendorMap = useMemo(() => {
     const m = new Map<string, string>();
@@ -334,6 +337,54 @@ export default function SalesPage() {
     void load();
   };
 
+  const matchLeads = async () => {
+    if (!activeOrgId) return;
+    setMatching(true);
+    const { data: leadsData } = await supabase
+      .from('leads')
+      .select('customer_full_name, customer_email, customer_phone, vendor_id')
+      .eq('organization_id', activeOrgId);
+
+    const phoneMap = new Map<string, { name: string; vendorId: string | null }>();
+    const emailMap = new Map<string, { name: string; vendorId: string | null }>();
+    for (const lead of leadsData ?? []) {
+      const p = normalizePhone(lead.customer_phone);
+      const e = normalizeEmail(lead.customer_email);
+      const entry = { name: lead.customer_full_name ?? 'Unknown', vendorId: lead.vendor_id ?? null };
+      if (p) phoneMap.set(p, entry);
+      if (e) emailMap.set(e, entry);
+    }
+
+    const result = new Map<string, string | null>();
+    const vendorUpdates: Array<{ id: string; vendor_id: string }> = [];
+    for (const sale of sales) {
+      const p = normalizePhone(sale.customer_phone);
+      const e = normalizeEmail(sale.customer_email);
+      const matched = (p ? phoneMap.get(p) : undefined) ?? (e ? emailMap.get(e) : undefined) ?? null;
+      result.set(sale.id, matched ? matched.name : null);
+      if (matched?.vendorId && !sale.vendor_id) {
+        vendorUpdates.push({ id: sale.id, vendor_id: matched.vendorId });
+      }
+    }
+    setLeadMatches(result);
+
+    if (vendorUpdates.length > 0) {
+      await Promise.all(
+        vendorUpdates.map(u =>
+          supabase.from('sales').update({ vendor_id: u.vendor_id, attribution_status: 'auto' }).eq('id', u.id),
+        ),
+      );
+      void load();
+    }
+
+    setMatching(false);
+    const matchCount = [...result.values()].filter(v => v !== null).length;
+    const msg = vendorUpdates.length > 0
+      ? `Matched ${matchCount} of ${sales.length} sales to leads · vendor assigned to ${vendorUpdates.length}`
+      : `Matched ${matchCount} of ${sales.length} sales to leads`;
+    toast.success(msg);
+  };
+
   const exportCsv = () => {
     const rows = filtered.map(s => ({
       sale_date: s.sale_date ?? '',
@@ -381,6 +432,9 @@ export default function SalesPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
+          <Button variant="outline" size="sm" onClick={matchLeads} disabled={matching || sales.length === 0}>
+            {matching ? 'Matching…' : 'Match Leads'}
+          </Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
@@ -505,19 +559,20 @@ export default function SalesPage() {
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  {leadMatches !== null && <TableHead>Matched Lead</TableHead>}
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={leadMatches !== null ? 13 : 12} className="text-center text-sm text-muted-foreground">
                       Loading sales...
                     </TableCell>
                   </TableRow>
                 ) : sorted.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={12} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={leadMatches !== null ? 13 : 12} className="text-center text-sm text-muted-foreground">
                       {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
                     </TableCell>
                   </TableRow>
@@ -552,6 +607,13 @@ export default function SalesPage() {
                         {sale.attribution_status}
                       </Badge>
                     </TableCell>
+                    {leadMatches !== null && (
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {leadMatches.get(sale.id) != null
+                          ? <span className="font-medium text-green-600">✅ {leadMatches.get(sale.id)}</span>
+                          : <span className="text-red-500">⚠️ No Match</span>}
+                      </TableCell>
+                    )}
                     <TableCell className="text-right">
                       <div className="flex justify-end gap-1">
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(sale)}>
