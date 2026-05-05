@@ -24,6 +24,8 @@ import AcceptInvite from '@/pages/AcceptInvite';
 import PortalOverview from '@/pages/admin/portal/PortalOverview';
 import DealershipsList from '@/pages/admin/portal/DealershipsList';
 import DealershipNew from '@/pages/admin/portal/DealershipNew';
+import DealershipDetail from '@/pages/admin/portal/DealershipDetail';
+import DealershipEdit from '@/pages/admin/portal/DealershipEdit';
 import NotFound from '@/pages/NotFound';
 
 const queryClient = new QueryClient();
@@ -151,6 +153,22 @@ const App = () => (
                 element={
                   <ProtectedRoute requireRole="admin">
                     <AppLayout><DealershipNew /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/portal/dealerships/:id"
+                element={
+                  <ProtectedRoute requireRole="admin">
+                    <AppLayout><DealershipDetail /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/portal/dealerships/:id/edit"
+                element={
+                  <ProtectedRoute requireRole="admin">
+                    <AppLayout><DealershipEdit /></AppLayout>
                   </ProtectedRoute>
                 }
               />

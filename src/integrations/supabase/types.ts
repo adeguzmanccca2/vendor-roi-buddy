@@ -181,28 +181,58 @@ export type Database = {
       }
       organizations: {
         Row: {
+          address_line1: string | null
+          address_line2: string | null
+          city: string | null
+          contact_person: string | null
+          country: string | null
           created_at: string
+          email: string | null
           id: string
           name: string
+          phone: string | null
           slug: string
+          state: string | null
           status: string
           updated_at: string
+          website: string | null
+          zip_code: string | null
         }
         Insert: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          contact_person?: string | null
+          country?: string | null
           created_at?: string
+          email?: string | null
           id?: string
           name: string
+          phone?: string | null
           slug: string
+          state?: string | null
           status?: string
           updated_at?: string
+          website?: string | null
+          zip_code?: string | null
         }
         Update: {
+          address_line1?: string | null
+          address_line2?: string | null
+          city?: string | null
+          contact_person?: string | null
+          country?: string | null
           created_at?: string
+          email?: string | null
           id?: string
           name?: string
+          phone?: string | null
           slug?: string
+          state?: string | null
           status?: string
           updated_at?: string
+          website?: string | null
+          zip_code?: string | null
         }
         Relationships: []
       }

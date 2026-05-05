@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import PortalLayout from './PortalLayout';
 import { Card, CardContent } from '@/components/ui/card';
@@ -7,7 +7,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Plus, Trash2, Search } from 'lucide-react';
+import { Plus, Trash2, Search, Pencil, Eye } from 'lucide-react';
 import { toast } from 'sonner';
 
 interface Dealership {
@@ -19,6 +19,7 @@ interface Dealership {
 }
 
 export default function DealershipsList() {
+  const navigate = useNavigate();
   const [list, setList] = useState<Dealership[]>([]);
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -113,6 +114,12 @@ export default function DealershipsList() {
                         {new Date(d.created_at).toLocaleDateString()}
                       </TableCell>
                       <TableCell className="text-right">
+                        <Button variant="ghost" size="sm" onClick={() => navigate(`/admin/portal/dealerships/${d.id}`)}>
+                          <Eye className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="sm" onClick={() => navigate(`/admin/portal/dealerships/${d.id}/edit`)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
                         <Button variant="ghost" size="sm" onClick={() => handleDelete(d.id, d.name)}>
                           <Trash2 className="h-4 w-4 text-destructive" />
                         </Button>
