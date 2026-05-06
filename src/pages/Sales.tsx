@@ -124,7 +124,8 @@ export default function SalesPage() {
   const [confirmDelete, setConfirmDelete] = useState<{ ids: string[]; label: string } | null>(null);
   const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  const [leadMatches, setLeadMatches] = useState<Map<string, string | null> | null>(null);
+  interface MatchResult { customerName: string; matchMethod: string; vendorName: string | null }
+  const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult> | null>(null);
   const [matching, setMatching] = useState(false);
 
   const vendorMap = useMemo(() => {
@@ -340,47 +341,107 @@ export default function SalesPage() {
   const matchLeads = async () => {
     if (!activeOrgId) return;
     setMatching(true);
+
     const { data: leadsData } = await supabase
       .from('leads')
-      .select('customer_full_name, customer_email, customer_phone, vendor_id')
+      .select('id, customer_full_name, customer_email, customer_phone, normalized_phone, normalized_email, vendor_id, vin, stock_number')
       .eq('organization_id', activeOrgId);
 
-    const phoneMap = new Map<string, { name: string; vendorId: string | null }>();
-    const emailMap = new Map<string, { name: string; vendorId: string | null }>();
+    type LeadEntry = { leadId: string; name: string; vendorId: string | null };
+    const vinMap = new Map<string, LeadEntry>();
+    const stockMap = new Map<string, LeadEntry>();
+    const phoneMap = new Map<string, LeadEntry>();
+    const emailMap = new Map<string, LeadEntry>();
+
     for (const lead of leadsData ?? []) {
-      const p = normalizePhone(lead.customer_phone);
-      const e = normalizeEmail(lead.customer_email);
-      const entry = { name: lead.customer_full_name ?? 'Unknown', vendorId: lead.vendor_id ?? null };
-      if (p) phoneMap.set(p, entry);
-      if (e) emailMap.set(e, entry);
+      const entry: LeadEntry = {
+        leadId: lead.id,
+        name: lead.customer_full_name ?? 'Unknown',
+        vendorId: lead.vendor_id ?? null,
+      };
+      if (lead.vin) {
+        const key = lead.vin.trim().toUpperCase();
+        if (key && !vinMap.has(key)) vinMap.set(key, entry);
+      }
+      if (lead.stock_number) {
+        const key = lead.stock_number.trim().toUpperCase();
+        if (key && !stockMap.has(key)) stockMap.set(key, entry);
+      }
+      const p = lead.normalized_phone || normalizePhone(lead.customer_phone);
+      if (p && !phoneMap.has(p)) phoneMap.set(p, entry);
+      const e = lead.normalized_email || normalizeEmail(lead.customer_email);
+      if (e && !emailMap.has(e)) emailMap.set(e, entry);
     }
 
-    const result = new Map<string, string | null>();
-    const vendorUpdates: Array<{ id: string; vendor_id: string }> = [];
+    const result = new Map<string, MatchResult>();
+    type SaleUpdate = { id: string; vendor_id: string; lead_id: string; confidence: number };
+    const updates: SaleUpdate[] = [];
+
     for (const sale of sales) {
-      const p = normalizePhone(sale.customer_phone);
-      const e = normalizeEmail(sale.customer_email);
-      const matched = (p ? phoneMap.get(p) : undefined) ?? (e ? emailMap.get(e) : undefined) ?? null;
-      result.set(sale.id, matched ? matched.name : null);
-      if (matched?.vendorId && !sale.vendor_id) {
-        vendorUpdates.push({ id: sale.id, vendor_id: matched.vendorId });
+      // Skip manual overrides
+      if (sale.attribution_status === 'manual') continue;
+
+      let matched: LeadEntry | null = null;
+      let method = '';
+      let confidence = 0;
+
+      // Priority 1: VIN
+      if (sale.vin) {
+        const key = sale.vin.trim().toUpperCase();
+        const hit = key ? vinMap.get(key) : undefined;
+        if (hit) { matched = hit; method = 'VIN'; confidence = 100; }
+      }
+      // Priority 2: Stock number
+      if (!matched && sale.stock_number) {
+        const key = sale.stock_number.trim().toUpperCase();
+        const hit = key ? stockMap.get(key) : undefined;
+        if (hit) { matched = hit; method = 'Stock#'; confidence = 95; }
+      }
+      // Priority 3: Phone
+      if (!matched) {
+        const p = normalizePhone(sale.customer_phone);
+        const hit = p ? phoneMap.get(p) : undefined;
+        if (hit) { matched = hit; method = 'Phone'; confidence = 80; }
+      }
+      // Priority 4: Email
+      if (!matched) {
+        const e = normalizeEmail(sale.customer_email);
+        const hit = e ? emailMap.get(e) : undefined;
+        if (hit) { matched = hit; method = 'Email'; confidence = 80; }
+      }
+
+      if (matched) {
+        result.set(sale.id, {
+          customerName: matched.name,
+          matchMethod: method,
+          vendorName: matched.vendorId ? vendorMap.get(matched.vendorId) ?? null : null,
+        });
+        if (matched.vendorId && !sale.vendor_id) {
+          updates.push({ id: sale.id, vendor_id: matched.vendorId, lead_id: matched.leadId, confidence });
+        }
       }
     }
+
     setLeadMatches(result);
 
-    if (vendorUpdates.length > 0) {
+    if (updates.length > 0) {
       await Promise.all(
-        vendorUpdates.map(u =>
-          supabase.from('sales').update({ vendor_id: u.vendor_id, attribution_status: 'auto' }).eq('id', u.id),
+        updates.map(u =>
+          supabase.from('sales').update({
+            vendor_id: u.vendor_id,
+            lead_id: u.lead_id,
+            attribution_status: 'auto',
+            attribution_confidence: u.confidence,
+          }).eq('id', u.id),
         ),
       );
       void load();
     }
 
     setMatching(false);
-    const matchCount = [...result.values()].filter(v => v !== null).length;
-    const msg = vendorUpdates.length > 0
-      ? `Matched ${matchCount} of ${sales.length} sales to leads · vendor assigned to ${vendorUpdates.length}`
+    const matchCount = result.size;
+    const msg = updates.length > 0
+      ? `Matched ${matchCount} of ${sales.length} sales · vendor assigned to ${updates.length}`
       : `Matched ${matchCount} of ${sales.length} sales to leads`;
     toast.success(msg);
   };
@@ -556,7 +617,7 @@ export default function SalesPage() {
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  {leadMatches !== null && <TableHead>Matched Lead</TableHead>}
+                  {leadMatches !== null && <TableHead>Lead Match</TableHead>}
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
@@ -605,10 +666,18 @@ export default function SalesPage() {
                       </Badge>
                     </TableCell>
                     {leadMatches !== null && (
-                      <TableCell className="whitespace-nowrap text-sm">
-                        {leadMatches.get(sale.id) != null
-                          ? <span className="font-medium text-green-600">✅ {leadMatches.get(sale.id)}</span>
-                          : <span className="text-red-500">⚠️ No Match</span>}
+                      <TableCell className="text-sm">
+                        {(() => {
+                          const m = leadMatches.get(sale.id);
+                          if (!m) return <span className="text-muted-foreground">⚠️ No match</span>;
+                          return (
+                            <div className="space-y-0.5">
+                              <div className="font-medium text-green-600 truncate max-w-[140px]">{m.customerName}</div>
+                              <Badge variant="outline" className="text-[10px] px-1 py-0">via {m.matchMethod}</Badge>
+                              {m.vendorName && <div className="text-xs text-muted-foreground truncate max-w-[140px]">{m.vendorName}</div>}
+                            </div>
+                          );
+                        })()}
                       </TableCell>
                     )}
                     <TableCell className="text-right">

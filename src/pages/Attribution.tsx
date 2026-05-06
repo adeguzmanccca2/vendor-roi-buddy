@@ -47,6 +47,7 @@ interface LeadRow {
   vehicle_make: string | null;
   vehicle_model: string | null;
   vin: string | null;
+  stock_number: string | null;
   source_label: string | null;
   lead_status: string;
 }
@@ -153,7 +154,7 @@ export default function AttributionPage() {
 
     const vQ = supabase.from('vendors').select('id, name, monthly_cost')
       .eq('organization_id', activeOrgId).order('name');
-    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, source_label, lead_status')
+    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, stock_number, source_label, lead_status')
       .eq('organization_id', activeOrgId)
       .order('lead_date', { ascending: false });
     // Bucket leads with no lead_date by created_at — otherwise they're invisible.
@@ -195,11 +196,9 @@ export default function AttributionPage() {
   const months = periodMonths(period);
 
   const perf: VendorPerf[] = useMemo(() => {
-    // Build a quick lookup so we can tell "real org vendor" from orphan vendor_ids.
     const knownVendorIds = new Set(vendors.map(v => v.id));
 
-    // VIN → set of vendor_ids that had a lead on this VIN.
-    // Revenue per vendor = Σ sale_price for sales whose VIN appears in that vendor's leads.
+    // VIN → vendor_ids from leads (secondary match)
     const vinToVendors = new Map<string, Set<string>>();
     for (const l of leads) {
       if (!l.vin || !l.vendor_id) continue;
@@ -210,32 +209,52 @@ export default function AttributionPage() {
       vinToVendors.set(key, set);
     }
 
-    const byVendor = new Map<string | null, { revenue: number; sales: number }>();
-    for (const s of sales) {
-      const vinKey = s as unknown as { vin?: string | null };
-      const vin = vinKey.vin ? String(vinKey.vin).trim().toUpperCase() : '';
-      const vinVendors = vin ? vinToVendors.get(vin) : undefined;
+    // stock_number → vendor_ids from leads (tertiary match)
+    const stockToVendors = new Map<string, Set<string>>();
+    for (const l of leads) {
+      if (!l.stock_number || !l.vendor_id) continue;
+      const key = l.stock_number.trim().toUpperCase();
+      if (!key) continue;
+      const set = stockToVendors.get(key) ?? new Set<string>();
+      set.add(l.vendor_id);
+      stockToVendors.set(key, set);
+    }
 
-      // Count sale toward each vendor whose lead VIN matches.
-      if (vinVendors && vinVendors.size > 0) {
-        for (const vid of vinVendors) {
-          const cur = byVendor.get(vid) ?? { revenue: 0, sales: 0 };
-          cur.revenue += Number(s.sale_price ?? 0);
-          cur.sales += 1;
-          byVendor.set(vid, cur);
-        }
-      } else {
-        // Fall back to the sale's own vendor_id (legacy attribution) for orphan-bucketing only.
-        const key = s.vendor_id && knownVendorIds.has(s.vendor_id) ? s.vendor_id : null;
-        if (key === null) {
-          const cur = byVendor.get(null) ?? { revenue: 0, sales: 0 };
-          cur.revenue += Number(s.sale_price ?? 0);
-          cur.sales += 1;
-          byVendor.set(null, cur);
-        }
-        // If sale has a known vendor_id but no VIN match, do NOT credit revenue —
-        // user explicitly defined revenue as VIN-matched sale_price only.
+    const byVendor = new Map<string | null, { revenue: number; sales: number }>();
+
+    const credit = (vendorId: string | null, sale: SaleRow) => {
+      const key = vendorId && knownVendorIds.has(vendorId) ? vendorId : null;
+      const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
+      cur.revenue += saleRevenue(sale);
+      cur.sales += 1;
+      byVendor.set(key, cur);
+    };
+
+    for (const s of sales) {
+      // Priority 1: vendor_id match — covers manual overrides and auto-attributed sales
+      if (s.vendor_id && knownVendorIds.has(s.vendor_id)) {
+        credit(s.vendor_id, s);
+        continue;
       }
+
+      // Priority 2: VIN match against lead VINs
+      const vin = s.vin ? s.vin.trim().toUpperCase() : '';
+      const vinVendors = vin ? vinToVendors.get(vin) : undefined;
+      if (vinVendors && vinVendors.size > 0) {
+        for (const vid of vinVendors) credit(vid, s);
+        continue;
+      }
+
+      // Priority 3: stock_number match against lead stock numbers
+      const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
+      const stockVendors = stock ? stockToVendors.get(stock) : undefined;
+      if (stockVendors && stockVendors.size > 0) {
+        for (const vid of stockVendors) credit(vid, s);
+        continue;
+      }
+
+      // No match — unassigned bucket
+      credit(null, s);
     }
     const rows: VendorPerf[] = vendors.map(v => {
       const agg = byVendor.get(v.id) ?? { revenue: 0, sales: 0 };
@@ -580,36 +599,53 @@ export default function AttributionPage() {
       <Dialog open={!!vendorSalesView} onOpenChange={(o) => !o && setVendorSalesView(null)}>
         <DialogContent className="max-w-4xl">
           {(() => {
-            // Match the perf-table logic: a sale belongs to a vendor when its VIN
-            // matches a VIN on one of that vendor's leads. Falls back to vendor_id
-            // for the "Unassigned" bucket and when no VIN match exists.
-            const vendorVins = new Set<string>();
-            if (vendorSalesView?.id) {
-              for (const l of leads) {
-                if (l.vendor_id !== vendorSalesView.id || !l.vin) continue;
-                const v = l.vin.trim().toUpperCase();
-                if (v) vendorVins.add(v);
+            const knownVendorIds = new Set(vendors.map(v => v.id));
+
+            // Build VIN and stock lookup maps (same as perf useMemo)
+            const allVinToVendors = new Map<string, Set<string>>();
+            const allStockToVendors = new Map<string, Set<string>>();
+            for (const l of leads) {
+              if (l.vendor_id) {
+                if (l.vin) {
+                  const v = l.vin.trim().toUpperCase();
+                  if (v) {
+                    const s = allVinToVendors.get(v) ?? new Set<string>();
+                    s.add(l.vendor_id);
+                    allVinToVendors.set(v, s);
+                  }
+                }
+                if (l.stock_number) {
+                  const sk = l.stock_number.trim().toUpperCase();
+                  if (sk) {
+                    const s = allStockToVendors.get(sk) ?? new Set<string>();
+                    s.add(l.vendor_id);
+                    allStockToVendors.set(sk, s);
+                  }
+                }
               }
             }
-            const allVinToVendors = new Map<string, Set<string>>();
-            for (const l of leads) {
-              if (!l.vin || !l.vendor_id) continue;
-              const v = l.vin.trim().toUpperCase();
-              if (!v) continue;
-              const set = allVinToVendors.get(v) ?? new Set<string>();
-              set.add(l.vendor_id);
-              allVinToVendors.set(v, set);
-            }
+
             const list = sales.filter(s => {
               const vin = s.vin ? s.vin.trim().toUpperCase() : '';
+              const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
+
               if (vendorSalesView?.id === null) {
-                // Unassigned bucket = no VIN match AND no known vendor_id
-                const matched = vin ? allVinToVendors.get(vin) : undefined;
-                return !matched && !s.vendor_id;
+                // Unassigned: no vendor_id, no VIN match, no stock match
+                return !s.vendor_id &&
+                  !(vin && allVinToVendors.has(vin)) &&
+                  !(stock && allStockToVendors.has(stock));
               }
-              return vin && vendorVins.has(vin);
+
+              const vid = vendorSalesView!.id!;
+              // Priority 1: direct vendor_id
+              if (s.vendor_id === vid) return true;
+              // Priority 2: VIN match (only if sale has no vendor_id)
+              if (!s.vendor_id && vin && allVinToVendors.get(vin)?.has(vid)) return true;
+              // Priority 3: stock_number match (only if sale has no vendor_id and no VIN match)
+              if (!s.vendor_id && !vin && stock && allStockToVendors.get(stock)?.has(vid)) return true;
+              return false;
             });
-            const rev = list.reduce((a, s) => a + Number(s.sale_price ?? 0), 0);
+            const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
             return (
               <>
                 <DialogHeader>
