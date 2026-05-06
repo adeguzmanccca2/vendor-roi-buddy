@@ -69,12 +69,15 @@ export default function InviteUserDialog({ open, onOpenChange, orgs, onSent }: P
       return;
     }
 
+    console.log('invite-user response:', data);
+
     setResultLink(data.acceptUrl);
     setResultEmailSent(!!data.emailSent);
     if (data.emailSent) {
       toast.success(`Invitation email sent to ${emailRes.data}`);
     } else {
-      toast.success('Invitation created — share the link below');
+      const reason = data.emailError ? `: ${data.emailError}` : '';
+      toast.warning(`Invitation created but email not sent${reason} — share the link below`);
     }
     onSent?.();
   };
