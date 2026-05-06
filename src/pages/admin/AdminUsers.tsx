@@ -6,7 +6,7 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { toast } from 'sonner';
-import { ShieldPlus, ShieldOff, UserPlus, Building2, Copy, X, Mail } from 'lucide-react';
+import { ShieldPlus, ShieldOff, UserPlus, Building2, Copy, X, Mail, RefreshCw } from 'lucide-react';
 import InviteUserDialog from '@/components/InviteUserDialog';
 import UserOrgsDialog from '@/components/UserOrgsDialog';
 
@@ -40,6 +40,7 @@ export default function AdminUsers() {
   const [loading, setLoading] = useState(true);
 
   const [inviteOpen, setInviteOpen] = useState(false);
+  const [resendData, setResendData] = useState<{ email: string; role: 'admin' | 'client'; orgIds: string[] } | null>(null);
   const [orgsDialog, setOrgsDialog] = useState<{ id: string; label: string } | null>(null);
 
   const load = async () => {
@@ -91,6 +92,14 @@ export default function AdminUsers() {
     const { error } = await supabase.from('invitations').update({ status: 'revoked' }).eq('id', id);
     if (error) return toast.error(error.message);
     toast.success('Invitation revoked');
+    load();
+  };
+
+  const resendInvite = async (inv: InvitationRow) => {
+    const { error } = await supabase.from('invitations').update({ status: 'revoked' }).eq('id', inv.id);
+    if (error) return toast.error(error.message);
+    setResendData({ email: inv.email, role: inv.role, orgIds: inv.organization_ids });
+    setInviteOpen(true);
     load();
   };
 
@@ -251,6 +260,9 @@ export default function AdminUsers() {
                               <Button variant="ghost" size="sm" onClick={() => copyInviteLink(inv.token)}>
                                 <Copy className="mr-1 h-3.5 w-3.5" /> Copy link
                               </Button>
+                              <Button variant="ghost" size="sm" onClick={() => resendInvite(inv)}>
+                                <RefreshCw className="mr-1 h-3.5 w-3.5" /> Resend
+                              </Button>
                               <Button variant="ghost" size="sm" onClick={() => revokeInvitation(inv.id)}>
                                 <X className="mr-1 h-3.5 w-3.5" /> Revoke
                               </Button>
@@ -267,7 +279,15 @@ export default function AdminUsers() {
         </TabsContent>
       </Tabs>
 
-      <InviteUserDialog open={inviteOpen} onOpenChange={setInviteOpen} orgs={orgs} onSent={load} />
+      <InviteUserDialog
+        open={inviteOpen}
+        onOpenChange={v => { setInviteOpen(v); if (!v) setResendData(null); }}
+        orgs={orgs}
+        onSent={load}
+        defaultEmail={resendData?.email}
+        defaultRole={resendData?.role}
+        defaultOrgIds={resendData?.orgIds}
+      />
       <UserOrgsDialog
         open={orgsDialog !== null}
         onOpenChange={v => !v && setOrgsDialog(null)}

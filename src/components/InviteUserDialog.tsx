@@ -18,11 +18,14 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   orgs: Org[];
   onSent?: () => void;
+  defaultEmail?: string;
+  defaultRole?: 'admin' | 'client';
+  defaultOrgIds?: string[];
 }
 
 const emailSchema = z.string().trim().email().max(255);
 
-export default function InviteUserDialog({ open, onOpenChange, orgs, onSent }: Props) {
+export default function InviteUserDialog({ open, onOpenChange, orgs, onSent, defaultEmail, defaultRole, defaultOrgIds }: Props) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState<'admin' | 'client'>('client');
   const [selectedOrgs, setSelectedOrgs] = useState<string[]>([]);
@@ -31,14 +34,14 @@ export default function InviteUserDialog({ open, onOpenChange, orgs, onSent }: P
   const [resultEmailSent, setResultEmailSent] = useState(false);
 
   useEffect(() => {
-    if (!open) {
-      setEmail('');
-      setRole('client');
-      setSelectedOrgs([]);
+    if (open) {
+      setEmail(defaultEmail ?? '');
+      setRole(defaultRole ?? 'client');
+      setSelectedOrgs(defaultOrgIds ?? []);
       setResultLink(null);
       setResultEmailSent(false);
     }
-  }, [open]);
+  }, [open]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const toggleOrg = (id: string) => {
     setSelectedOrgs(prev => prev.includes(id) ? prev.filter(o => o !== id) : [...prev, id]);
