@@ -50,18 +50,18 @@ async function sendBrevoEmail(
       body: JSON.stringify({
         sender: { name: 'Vendor ROI', email: 'noreply@logos-tek.com' },
         to: [{ email: to }],
-        subject: 'You've been invited to Vendor ROI',
+        subject: "You've been invited to Vendor ROI",
         htmlContent: html,
       }),
     });
 
+    const responseText = await res.text();
     if (!res.ok) {
-      const body = await res.text();
-      return { sent: false, error: `Brevo ${res.status}: ${body}` };
+      return { sent: false, error: `Brevo HTTP ${res.status}: ${responseText}` };
     }
     return { sent: true, error: null };
   } catch (e) {
-    return { sent: false, error: (e as Error).message };
+    return { sent: false, error: `fetch error: ${(e as Error).name}: ${(e as Error).message}` };
   }
 }
 
