@@ -1,4 +1,4 @@
-// Admin-only: create an invitation row + send a Supabase Auth invite email.
+// Admin-only: create an invitation row + send an invite email via Brevo.
 // The email links to our app where /accept-invite?token=... finalizes role + dealership memberships.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
 
@@ -12,7 +12,57 @@ interface InvitePayload {
   email: string;
   role: 'admin' | 'client';
   organizationIds: string[];
-  redirectOrigin: string; // e.g. https://your-app.lovable.app
+  redirectOrigin: string;
+}
+
+async function sendBrevoEmail(
+  apiKey: string,
+  to: string,
+  acceptUrl: string,
+): Promise<{ sent: boolean; error: string | null }> {
+  const html = `
+    <div style="font-family:sans-serif;max-width:560px;margin:0 auto;padding:32px 24px;color:#111">
+      <h2 style="margin-top:0">You've been invited to Vendor ROI</h2>
+      <p>Click the button below to create your account and get started.</p>
+      <p style="margin:32px 0">
+        <a href="${acceptUrl}"
+           style="background:#18181b;color:#fff;text-decoration:none;padding:12px 24px;border-radius:6px;font-size:14px;font-weight:600">
+          Accept invitation
+        </a>
+      </p>
+      <p style="font-size:12px;color:#6b7280">
+        Or copy this link into your browser:<br>
+        <span style="color:#2563eb">${acceptUrl}</span>
+      </p>
+      <p style="font-size:12px;color:#6b7280;margin-top:32px">
+        This invitation expires in 14 days. If you did not expect this email, you can safely ignore it.
+      </p>
+    </div>
+  `;
+
+  try {
+    const res = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': apiKey,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { name: 'Vendor ROI', email: 'noreply@logos-tek.com' },
+        to: [{ email: to }],
+        subject: 'You've been invited to Vendor ROI',
+        htmlContent: html,
+      }),
+    });
+
+    if (!res.ok) {
+      const body = await res.text();
+      return { sent: false, error: `Brevo ${res.status}: ${body}` };
+    }
+    return { sent: true, error: null };
+  } catch (e) {
+    return { sent: false, error: (e as Error).message };
+  }
 }
 
 Deno.serve(async (req) => {
@@ -22,11 +72,10 @@ Deno.serve(async (req) => {
     const SUPABASE_URL = Deno.env.get('SUPABASE_URL')!;
     const ANON = Deno.env.get('SUPABASE_PUBLISHABLE_KEY') ?? Deno.env.get('SUPABASE_ANON_KEY')!;
     const SERVICE = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+    const BREVO_API_KEY = Deno.env.get('BREVO_API_KEY');
 
     const authHeader = req.headers.get('Authorization');
-    if (!authHeader) {
-      return json({ error: 'Missing auth' }, 401);
-    }
+    if (!authHeader) return json({ error: 'Missing auth' }, 401);
 
     // Validate caller is an admin using their JWT
     const userClient = createClient(SUPABASE_URL, ANON, {
@@ -76,22 +125,16 @@ Deno.serve(async (req) => {
 
     const acceptUrl = `${origin}/accept-invite?token=${inv.token}`;
 
-    // Try to send Supabase Auth invite email (uses platform default templates)
+    // Send invite email via Brevo
     let emailSent = false;
     let emailError: string | null = null;
-    try {
-      const { error: inviteErr } = await admin.auth.admin.inviteUserByEmail(email, {
-        redirectTo: acceptUrl,
-        data: { invitation_token: inv.token, full_name: email.split('@')[0] },
-      });
-      if (inviteErr) {
-        // If user already exists, fall through and just return the link.
-        emailError = inviteErr.message;
-      } else {
-        emailSent = true;
-      }
-    } catch (e) {
-      emailError = (e as Error).message;
+
+    if (!BREVO_API_KEY) {
+      emailError = 'BREVO_API_KEY secret is not set';
+    } else {
+      const result = await sendBrevoEmail(BREVO_API_KEY, email, acceptUrl);
+      emailSent = result.sent;
+      emailError = result.error;
     }
 
     return json({
