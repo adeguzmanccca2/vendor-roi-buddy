@@ -42,11 +42,9 @@ export default function AcceptInvite() {
         setLoading(false);
         return;
       }
-      const { data, error } = await supabase
-        .from('invitations')
-        .select('id, email, role, organization_ids, status, expires_at')
-        .eq('token', token)
-        .maybeSingle();
+      const { data: rows, error } = await supabase
+        .rpc('get_invitation_by_token', { _token: token });
+      const data = rows?.[0] ?? null;
       if (error || !data) {
         setInvitation(null);
       } else {

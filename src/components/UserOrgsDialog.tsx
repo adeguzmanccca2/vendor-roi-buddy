@@ -2,11 +2,13 @@ import { useEffect, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Label } from '@/components/ui/label';
 import { toast } from 'sonner';
+import { Search, X } from 'lucide-react';
 
-interface Org { id: string; name: string }
+interface Org { id: string; name: string; slug?: string | null; status?: string | null }
 
 interface Props {
   open: boolean;
@@ -21,9 +23,11 @@ export default function UserOrgsDialog({ open, onOpenChange, userId, userLabel, 
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [busy, setBusy] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [search, setSearch] = useState('');
 
   useEffect(() => {
     if (!open || !userId) return;
+    setSearch('');
     setLoading(true);
     (async () => {
       const { data } = await supabase
@@ -43,6 +47,15 @@ export default function UserOrgsDialog({ open, onOpenChange, userId, userLabel, 
       return next;
     });
   };
+
+  const filtered = orgs.filter(o => {
+    if (!search) return true;
+    const s = search.toLowerCase();
+    return (
+      o.name.toLowerCase().includes(s) ||
+      (o.slug ?? '').toLowerCase().includes(s)
+    );
+  });
 
   const handleSave = async () => {
     if (!userId) return;
@@ -96,20 +109,73 @@ export default function UserOrgsDialog({ open, onOpenChange, userId, userLabel, 
           <p className="text-sm text-muted-foreground">{userLabel}</p>
         </DialogHeader>
 
-        <div className="space-y-2 py-2">
-          <Label>Dealerships ({selected.size} selected)</Label>
-          <div className="max-h-72 space-y-2 overflow-y-auto rounded-md border p-3">
+        <div className="space-y-3 py-1">
+          <div className="flex items-center justify-between text-sm text-muted-foreground">
+            <span>{orgs.length} dealership{orgs.length !== 1 ? 's' : ''} total</span>
+            <span>{selected.size} selected</span>
+          </div>
+
+          <div className="relative">
+            <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              className="pl-9 pr-9"
+              placeholder="Search by name or slug..."
+              value={search}
+              onChange={e => setSearch(e.target.value)}
+            />
+            {search && (
+              <button
+                onClick={() => setSearch('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            )}
+          </div>
+
+          <div className="max-h-72 space-y-1.5 overflow-y-auto rounded-md border p-2">
             {loading ? (
-              <p className="text-sm text-muted-foreground">Loading...</p>
-            ) : orgs.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No dealerships available.</p>
+              <p className="py-4 text-center text-sm text-muted-foreground">Loading...</p>
+            ) : filtered.length === 0 ? (
+              <p className="py-4 text-center text-sm text-muted-foreground">
+                {orgs.length === 0 ? 'No dealerships available.' : 'No organizations found.'}
+              </p>
             ) : (
-              orgs.map(o => (
-                <label key={o.id} className="flex cursor-pointer items-center gap-2 text-sm">
-                  <Checkbox checked={selected.has(o.id)} onCheckedChange={() => toggle(o.id)} />
-                  <span>{o.name}</span>
-                </label>
-              ))
+              filtered.map(o => {
+                const isSelected = selected.has(o.id);
+                return (
+                  <button
+                    key={o.id}
+                    type="button"
+                    onClick={() => toggle(o.id)}
+                    className={`flex w-full items-center gap-3 rounded-md px-3 py-2.5 text-left transition-colors ${
+                      isSelected
+                        ? 'bg-primary/10 ring-1 ring-primary/30'
+                        : 'hover:bg-muted'
+                    }`}
+                  >
+                    <Checkbox
+                      checked={isSelected}
+                      onCheckedChange={() => toggle(o.id)}
+                      onClick={e => e.stopPropagation()}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="truncate text-sm font-medium text-foreground">{o.name}</p>
+                      {o.slug && (
+                        <p className="truncate text-xs text-muted-foreground font-mono">{o.slug}</p>
+                      )}
+                    </div>
+                    {o.status && (
+                      <Badge
+                        variant={o.status === 'active' ? 'default' : 'secondary'}
+                        className="shrink-0 text-xs"
+                      >
+                        {o.status}
+                      </Badge>
+                    )}
+                  </button>
+                );
+              })
             )}
           </div>
         </div>
