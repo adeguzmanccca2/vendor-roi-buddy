@@ -26,6 +26,7 @@ import DealershipsList from '@/pages/admin/portal/DealershipsList';
 import DealershipNew from '@/pages/admin/portal/DealershipNew';
 import DealershipDetail from '@/pages/admin/portal/DealershipDetail';
 import DealershipEdit from '@/pages/admin/portal/DealershipEdit';
+import IntegrationsPage from '@/pages/Integrations';
 import NotFound from '@/pages/NotFound';
 
 const queryClient = new QueryClient();
@@ -177,6 +178,15 @@ const App = () => (
                 element={
                   <ProtectedRoute requireRole="admin">
                     <AppLayout><AdminUsers /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+
+              <Route
+                path="/integrations"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><IntegrationsPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />

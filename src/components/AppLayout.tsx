@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, GitBranch, Car, Receipt } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, GitBranch, Car, Receipt, Plug } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
@@ -23,6 +23,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/attribution', label: 'Attribution', icon: TrendingUp },
     { to: '/source-rules', label: 'Source Rules', icon: GitBranch },
     { to: '/inventory', label: 'Inventory', icon: Car },
+    { to: '/integrations', label: 'Integrations', icon: Plug },
   ];
 
   const clientLinks = [
@@ -33,6 +34,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/attribution', label: 'Attribution', icon: TrendingUp },
     { to: '/source-rules', label: 'Source Rules', icon: GitBranch },
     { to: '/inventory', label: 'Inventory', icon: Car },
+    { to: '/integrations', label: 'Integrations', icon: Plug },
   ];
 
   const links = isAdmin ? adminLinks : clientLinks;
