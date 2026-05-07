@@ -23,6 +23,7 @@ interface Credential {
   is_active: boolean;
   last_used_at: string | null;
   lead_count: number;
+  sale_count: number;
   created_at: string;
 }
 
@@ -197,6 +198,7 @@ export default function Integrations() {
                     <TableHead>Status</TableHead>
                     <TableHead>Last Used</TableHead>
                     <TableHead className="text-right">Leads</TableHead>
+                    <TableHead className="text-right">Sales</TableHead>
                     <TableHead className="text-right">Actions</TableHead>
                   </TableRow>
                 </TableHeader>
@@ -241,6 +243,9 @@ export default function Integrations() {
                         </TableCell>
                         <TableCell className="text-right text-sm tabular-nums">
                           {cred.lead_count.toLocaleString()}
+                        </TableCell>
+                        <TableCell className="text-right text-sm tabular-nums">
+                          {cred.sale_count.toLocaleString()}
                         </TableCell>
                         <TableCell className="text-right">
                           <Button variant="ghost" size="sm" onClick={() => toggleActive(cred)}>
