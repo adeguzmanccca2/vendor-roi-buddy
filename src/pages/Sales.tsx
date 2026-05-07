@@ -22,7 +22,8 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Pencil, Trash2, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Pencil, Trash2, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown, Upload } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { downloadCsv } from '@/lib/exportCsv';
 import { normalizePhone, normalizeEmail } from '@/lib/normalize';
 import { toast } from 'sonner';
@@ -496,6 +497,9 @@ export default function SalesPage() {
           <Button variant="outline" size="sm" onClick={matchLeads} disabled={matching || sales.length === 0}>
             {matching ? 'Matching…' : 'Match Leads'}
           </Button>
+          <Button variant="outline" size="sm" asChild>
+ 		 <Link to="/sales-upload"><Upload className="mr-2 h-4 w-4" /> Upload sales</Link>
+	 </Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
