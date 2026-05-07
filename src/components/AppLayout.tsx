@@ -109,7 +109,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
             <LogOut className="mr-2 h-4 w-4" />
             Sign Out
           </Button>
-           <p className="mt-2 px-3 text-[10px] text-muted-foreground">v08c38e4</p>
+          <p className="mt-2 px-3 text-[10px] text-muted-foreground">v{__COMMIT_HASH__}</p>
         </div>
       </aside>
 
