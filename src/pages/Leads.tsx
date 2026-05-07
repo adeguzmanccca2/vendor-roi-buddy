@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogT
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -325,6 +325,9 @@ export default function LeadsPage() {
               </AlertDialogContent>
             </AlertDialog>
           )}
+	<Button variant="outline" asChild>
+  	    <Link to="/upload"><Upload className="mr-1 h-4 w-4" /> Upload leads</Link>
+	</Button>
           <Button variant="outline" onClick={() => {
             const vMap = new Map(vendors.map(v => [v.id, v.name]));
             downloadCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, leads.map(l => ({
