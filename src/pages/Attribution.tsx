@@ -149,46 +149,55 @@ export default function AttributionPage() {
   const load = async () => {
     if (!activeOrgId) return;
     setLoading(true);
-    const { start: sinceIso, end: untilIso } = periodRange(period);
-    const trendSinceIso = new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString();
+    try {
+      const { start: sinceIso, end: untilIso } = periodRange(period);
+      const trendSinceIso = new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString();
 
-    const vQ = supabase.from('vendors').select('id, name, monthly_cost')
-      .eq('organization_id', activeOrgId).order('name');
-    let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, stock_number, source_label, lead_status')
-      .eq('organization_id', activeOrgId)
-      .order('lead_date', { ascending: false });
-    // Bucket leads with no lead_date by created_at — otherwise they're invisible.
-    if (sinceIso && untilIso) {
-      lQ = lQ.or(
-        `and(lead_date.gte.${sinceIso},lead_date.lt.${untilIso}),` +
-        `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
-      );
+      const vQ = supabase.from('vendors').select('id, name, monthly_cost')
+        .eq('organization_id', activeOrgId).order('name');
+      let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, stock_number, source_label, lead_status')
+        .eq('organization_id', activeOrgId)
+        .order('lead_date', { ascending: false });
+      if (sinceIso && untilIso) {
+        lQ = lQ.or(
+          `and(lead_date.gte.${sinceIso},lead_date.lt.${untilIso}),` +
+          `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
+        );
+      }
+      let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
+        .eq('organization_id', activeOrgId)
+        .order('sale_date', { ascending: false });
+      if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
+      if (untilIso) sQ = sQ.lt('sale_date', untilIso);
+
+      const tQ = supabase.from('sales').select('sale_date, sale_price, total_gross, gross_revenue')
+        .eq('organization_id', activeOrgId)
+        .gte('sale_date', trendSinceIso);
+
+      const [{ data: vData, error: vErr }, { data: lData, error: lErr }, { data: sData, error: sErr }, { data: tData }] = await Promise.all([vQ, lQ, sQ, tQ]);
+
+      if (vErr) toast.error('Failed to load vendors: ' + vErr.message);
+      if (lErr) toast.error('Failed to load leads: ' + lErr.message);
+      if (sErr) toast.error('Failed to load sales: ' + sErr.message);
+
+      setVendors((vData ?? []) as Vendor[]);
+      const leadRows = (lData ?? []) as LeadRow[];
+      setLeads(leadRows);
+      const counts: Record<string, number> = {};
+      let unassigned = 0;
+      for (const l of leadRows) {
+        if (!l.vendor_id) { unassigned++; continue; }
+        counts[l.vendor_id] = (counts[l.vendor_id] ?? 0) + 1;
+      }
+      setLeadCounts(counts);
+      setUnattributedLeads(unassigned);
+      setSales((sData ?? []) as SaleRow[]);
+      setTrendSales((tData ?? []) as any);
+    } catch (e: any) {
+      toast.error('Failed to load attribution data: ' + (e.message ?? 'Unknown error'));
+    } finally {
+      setLoading(false);
     }
-    let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
-      .eq('organization_id', activeOrgId)
-      .order('sale_date', { ascending: false });
-    if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
-    if (untilIso) sQ = sQ.lt('sale_date', untilIso);
-
-    const tQ = supabase.from('sales').select('sale_date, sale_price, total_gross, gross_revenue')
-      .eq('organization_id', activeOrgId)
-      .gte('sale_date', trendSinceIso);
-
-    const [{ data: vData }, { data: lData }, { data: sData }, { data: tData }] = await Promise.all([vQ, lQ, sQ, tQ]);
-    setVendors((vData ?? []) as Vendor[]);
-    const leadRows = (lData ?? []) as LeadRow[];
-    setLeads(leadRows);
-    const counts: Record<string, number> = {};
-    let unassigned = 0;
-    for (const l of leadRows) {
-      if (!l.vendor_id) { unassigned++; continue; }
-      counts[l.vendor_id] = (counts[l.vendor_id] ?? 0) + 1;
-    }
-    setLeadCounts(counts);
-    setUnattributedLeads(unassigned);
-    setSales((sData ?? []) as SaleRow[]);
-    setTrendSales((tData ?? []) as any);
-    setLoading(false);
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeOrgId, period]);
