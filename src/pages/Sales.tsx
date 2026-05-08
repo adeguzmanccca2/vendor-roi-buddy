@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useState } from 'react';
-
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -55,7 +54,6 @@ interface Sale {
 interface VendorOption { id: string; name: string }
 
 const NO_VENDOR = '__none__';
-
 
 const emptyForm = {
   customer_full_name: '',
@@ -126,7 +124,7 @@ export default function SalesPage() {
   const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
   interface MatchResult { customerName: string; matchMethod: string; vendorName: string | null }
-  const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult> | null>(null);
+  const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult>>(new Map());
   const [matching, setMatching] = useState(false);
 
   const vendorMap = useMemo(() => {
@@ -134,6 +132,24 @@ export default function SalesPage() {
     vendorList.forEach(v => m.set(v.id, v.name));
     return m;
   }, [vendorList]);
+
+  // Build lead matches from already-saved attribution data when sales and vendors load.
+  // Why: saves already have vendor_id and attribution_status stored from previous Match Leads runs,
+  // so we can show the match column instantly without any extra API calls.
+  useEffect(() => {
+    if (sales.length === 0 || vendorList.length === 0) return;
+    const result = new Map<string, MatchResult>();
+    for (const sale of sales) {
+      if (sale.vendor_id && (sale.attribution_status === 'auto' || sale.attribution_status === 'manual')) {
+        result.set(sale.id, {
+          customerName: sale.customer_full_name ?? 'Unknown',
+          matchMethod: sale.attribution_status === 'manual' ? 'Manual' : 'Auto',
+          vendorName: vendorMap.get(sale.vendor_id) ?? null,
+        });
+      }
+    }
+    setLeadMatches(result);
+  }, [sales, vendorList, vendorMap]);
 
   const toggleSort = (key: keyof Sale) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -312,7 +328,6 @@ export default function SalesPage() {
       notes: form.notes || null,
       manual_override: true,
     };
-    // If user manually picked/cleared a vendor, lock attribution as manual so re-runs don't overwrite.
     if (vendorChanged) {
       payload.attribution_status = newVendorId ? 'manual' : 'none';
       payload.attribution_confidence = 100;
@@ -379,32 +394,27 @@ export default function SalesPage() {
     const updates: SaleUpdate[] = [];
 
     for (const sale of sales) {
-      // Skip manual overrides
       if (sale.attribution_status === 'manual') continue;
 
       let matched: LeadEntry | null = null;
       let method = '';
       let confidence = 0;
 
-      // Priority 1: VIN
       if (sale.vin) {
         const key = sale.vin.trim().toUpperCase();
         const hit = key ? vinMap.get(key) : undefined;
         if (hit) { matched = hit; method = 'VIN'; confidence = 100; }
       }
-      // Priority 2: Stock number
       if (!matched && sale.stock_number) {
         const key = sale.stock_number.trim().toUpperCase();
         const hit = key ? stockMap.get(key) : undefined;
         if (hit) { matched = hit; method = 'Stock#'; confidence = 95; }
       }
-      // Priority 3: Phone
       if (!matched) {
         const p = normalizePhone(sale.customer_phone);
         const hit = p ? phoneMap.get(p) : undefined;
         if (hit) { matched = hit; method = 'Phone'; confidence = 80; }
       }
-      // Priority 4: Email
       if (!matched) {
         const e = normalizeEmail(sale.customer_email);
         const hit = e ? emailMap.get(e) : undefined;
@@ -498,8 +508,8 @@ export default function SalesPage() {
             {matching ? 'Matching…' : 'Match Leads'}
           </Button>
           <Button variant="outline" size="sm" asChild>
- 		 <Link to="/sales/upload"><Upload className="mr-2 h-4 w-4" /> Upload sales</Link>
-	 </Button>
+            <Link to="/sales/upload"><Upload className="mr-2 h-4 w-4" /> Upload sales</Link>
+          </Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
@@ -516,12 +526,7 @@ export default function SalesPage() {
               <Label className="text-xs">Search</Label>
               <div className="relative">
                 <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                <Input
-                  className="pl-8"
-                  placeholder="Anything..."
-                  value={search}
-                  onChange={e => setSearch(e.target.value)}
-                />
+                <Input className="pl-8" placeholder="Anything..." value={search} onChange={e => setSearch(e.target.value)} />
               </div>
             </div>
             <div>
@@ -566,16 +571,8 @@ export default function SalesPage() {
         <div className="flex items-center justify-between rounded-md border border-border bg-muted/50 px-4 py-2">
           <span className="text-sm">{selected.size} selected</span>
           <div className="flex gap-2">
-            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>
-              Clear
-            </Button>
-            <Button
-              variant="destructive"
-              size="sm"
-              onClick={() =>
-                setConfirmDelete({ ids: Array.from(selected), label: `${selected.size} sale(s)` })
-              }
-            >
+            <Button variant="ghost" size="sm" onClick={() => setSelected(new Set())}>Clear</Button>
+            <Button variant="destructive" size="sm" onClick={() => setConfirmDelete({ ids: Array.from(selected), label: `${selected.size} sale(s)` })}>
               <Trash2 className="mr-2 h-4 w-4" /> Delete selected
             </Button>
           </div>
@@ -591,25 +588,18 @@ export default function SalesPage() {
                 {filtered.length.toLocaleString()} {filtered.length === 1 ? 'record' : 'records'}
               </span>
               {filtered.length !== sales.length && (
-                <span className="text-muted-foreground">
-                  of {sales.length.toLocaleString()} total
-                </span>
+                <span className="text-muted-foreground">of {sales.length.toLocaleString()} total</span>
               )}
             </div>
           </div>
         </CardHeader>
         <CardContent className="p-0">
-          {/* Single scroll container (the Table component's own wrapper div) — handles BOTH axes */}
           <div className="[&>div]:max-h-[calc(100vh-380px)] [&>div]:min-h-[300px] [&>div]:overflow-auto">
             <Table className="min-w-[1400px]">
               <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                 <TableRow>
                   <TableHead className="w-10">
-                    <Checkbox
-                      checked={allOnPageSelected}
-                      onCheckedChange={toggleAll}
-                      aria-label="Select all"
-                    />
+                    <Checkbox checked={allOnPageSelected} onCheckedChange={toggleAll} aria-label="Select all" />
                   </TableHead>
                   <SortHeader label="Sale date" k="sale_date" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
@@ -621,59 +611,52 @@ export default function SalesPage() {
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  {leadMatches !== null && <TableHead>Lead Match</TableHead>}
+                  <TableHead>Lead Match</TableHead>
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
                   <TableRow>
-                    <TableCell colSpan={leadMatches !== null ? 13 : 12} className="text-center text-sm text-muted-foreground">
-                      Loading sales...
-                    </TableCell>
+                    <TableCell colSpan={13} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell>
                   </TableRow>
                 ) : sorted.length === 0 ? (
                   <TableRow>
-                    <TableCell colSpan={leadMatches !== null ? 13 : 12} className="text-center text-sm text-muted-foreground">
+                    <TableCell colSpan={13} className="text-center text-sm text-muted-foreground">
                       {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
                     </TableCell>
                   </TableRow>
                 ) : (
                   sorted.map(sale => (
-                  <TableRow key={sale.id} data-state={selected.has(sale.id) ? 'selected' : undefined}>
-                    <TableCell>
-                      <Checkbox
-                        checked={selected.has(sale.id)}
-                        onCheckedChange={() => toggleOne(sale.id)}
-                        aria-label={`Select sale ${sale.id}`}
-                      />
-                    </TableCell>
-                    <TableCell className="whitespace-nowrap">{fmtDate(sale.sale_date)}</TableCell>
-                    <TableCell>
-                      <div className="font-medium">{sale.customer_full_name ?? '—'}</div>
-                      <div className="text-xs text-muted-foreground">{sale.customer_email ?? sale.customer_phone ?? ''}</div>
-                    </TableCell>
-                    <TableCell className="font-mono text-xs">{sale.vin ?? '—'}</TableCell>
-                    <TableCell>{vehicleStr(sale) || '—'}</TableCell>
-                    <TableCell>{sale.stock_number ?? '—'}</TableCell>
-                    <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
-                    <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
-                    <TableCell>{sale.salesperson ?? '—'}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {sale.vendor_id
-                        ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
-                        : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
-                        {sale.attribution_status}
-                      </Badge>
-                    </TableCell>
-                    {leadMatches !== null && (
+                    <TableRow key={sale.id} data-state={selected.has(sale.id) ? 'selected' : undefined}>
+                      <TableCell>
+                        <Checkbox checked={selected.has(sale.id)} onCheckedChange={() => toggleOne(sale.id)} aria-label={`Select sale ${sale.id}`} />
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap">{fmtDate(sale.sale_date)}</TableCell>
+                      <TableCell>
+                        <div className="font-medium">{sale.customer_full_name ?? '—'}</div>
+                        <div className="text-xs text-muted-foreground">{sale.customer_email ?? sale.customer_phone ?? ''}</div>
+                      </TableCell>
+                      <TableCell className="font-mono text-xs">{sale.vin ?? '—'}</TableCell>
+                      <TableCell>{vehicleStr(sale) || '—'}</TableCell>
+                      <TableCell>{sale.stock_number ?? '—'}</TableCell>
+                      <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
+                      <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
+                      <TableCell>{sale.salesperson ?? '—'}</TableCell>
+                      <TableCell className="whitespace-nowrap text-sm">
+                        {sale.vendor_id
+                          ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
+                          : <span className="text-muted-foreground">—</span>}
+                      </TableCell>
+                      <TableCell>
+                        <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
+                          {sale.attribution_status}
+                        </Badge>
+                      </TableCell>
                       <TableCell className="text-sm">
                         {(() => {
                           const m = leadMatches.get(sale.id);
-                          if (!m) return <span className="text-muted-foreground">⚠️ No match</span>;
+                          if (!m) return <span className="text-muted-foreground">— No match</span>;
                           return (
                             <div className="space-y-0.5">
                               <div className="font-medium text-green-600 truncate max-w-[140px]">{m.customerName}</div>
@@ -683,29 +666,18 @@ export default function SalesPage() {
                           );
                         })()}
                       </TableCell>
-                    )}
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(sale)}>
-                          <Pencil className="h-4 w-4" />
-                        </Button>
-                        <Button
-                          variant="ghost"
-                          size="icon"
-                          className="h-8 w-8 text-destructive"
-                          onClick={() =>
-                            setConfirmDelete({
-                              ids: [sale.id],
-                              label: sale.customer_full_name ?? 'this sale',
-                            })
-                          }
-                        >
-                          <Trash2 className="h-4 w-4" />
-                        </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))
+                      <TableCell className="text-right">
+                        <div className="flex justify-end gap-1">
+                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(sale)}>
+                            <Pencil className="h-4 w-4" />
+                          </Button>
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setConfirmDelete({ ids: [sale.id], label: sale.customer_full_name ?? 'this sale' })}>
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ))
                 )}
               </TableBody>
             </Table>
@@ -713,12 +685,9 @@ export default function SalesPage() {
         </CardContent>
       </Card>
 
-      {/* Edit dialog */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>Edit sale</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Edit sale</DialogTitle></DialogHeader>
           <div className="grid gap-3 md:grid-cols-2">
             <div className="md:col-span-2">
               <Label>Customer name</Label>
@@ -782,10 +751,7 @@ export default function SalesPage() {
             </div>
             <div>
               <Label>Vendor</Label>
-              <Select
-                value={form.vendor_id || NO_VENDOR}
-                onValueChange={v => setForm({ ...form, vendor_id: v === NO_VENDOR ? '' : v })}
-              >
+              <Select value={form.vendor_id || NO_VENDOR} onValueChange={v => setForm({ ...form, vendor_id: v === NO_VENDOR ? '' : v })}>
                 <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_VENDOR}>— None —</SelectItem>
@@ -807,7 +773,6 @@ export default function SalesPage() {
         </DialogContent>
       </Dialog>
 
-      {/* Delete confirm */}
       <AlertDialog open={!!confirmDelete} onOpenChange={open => !open && setConfirmDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -818,9 +783,7 @@ export default function SalesPage() {
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
-            <AlertDialogAction onClick={doDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-              Delete
-            </AlertDialogAction>
+            <AlertDialogAction onClick={doDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
