@@ -52,9 +52,6 @@ interface LeadRow {
   lead_status: string;
 }
 
-// Single source of truth for "what counts as revenue from a sale".
-// Per project rule: ROI uses front + back gross (true dealer profit),
-// not sticker/sale price. Falls back to gross_revenue, then 0.
 function saleRevenue(s: { total_gross?: number | null; gross_revenue?: number | null }): number {
   const tg = Number(s.total_gross ?? 0);
   if (tg) return tg;
@@ -101,7 +98,7 @@ function periodRange(p: Period): { start: string | null; end: string | null } {
   if (isMonthPeriod(p)) {
     const [y, m] = p.slice(2).split('-').map(Number);
     const start = new Date(y, m - 1, 1);
-    const end = new Date(y, m, 1); // first day of next month, exclusive
+    const end = new Date(y, m, 1);
     return { start: start.toISOString(), end: end.toISOString() };
   }
   return { start: null, end: null };
@@ -207,7 +204,6 @@ export default function AttributionPage() {
   const perf: VendorPerf[] = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
 
-    // VIN → vendor_ids from leads (secondary match)
     const vinToVendors = new Map<string, Set<string>>();
     for (const l of leads) {
       if (!l.vin || !l.vendor_id) continue;
@@ -218,7 +214,6 @@ export default function AttributionPage() {
       vinToVendors.set(key, set);
     }
 
-    // stock_number → vendor_ids from leads (tertiary match)
     const stockToVendors = new Map<string, Set<string>>();
     for (const l of leads) {
       if (!l.stock_number || !l.vendor_id) continue;
@@ -240,31 +235,25 @@ export default function AttributionPage() {
     };
 
     for (const s of sales) {
-      // Priority 1: vendor_id match — covers manual overrides and auto-attributed sales
       if (s.vendor_id && knownVendorIds.has(s.vendor_id)) {
         credit(s.vendor_id, s);
         continue;
       }
-
-      // Priority 2: VIN match against lead VINs
       const vin = s.vin ? s.vin.trim().toUpperCase() : '';
       const vinVendors = vin ? vinToVendors.get(vin) : undefined;
       if (vinVendors && vinVendors.size > 0) {
         for (const vid of vinVendors) credit(vid, s);
         continue;
       }
-
-      // Priority 3: stock_number match against lead stock numbers
       const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
       const stockVendors = stock ? stockToVendors.get(stock) : undefined;
       if (stockVendors && stockVendors.size > 0) {
         for (const vid of stockVendors) credit(vid, s);
         continue;
       }
-
-      // No match — unassigned bucket
       credit(null, s);
     }
+
     const rows: VendorPerf[] = vendors.map(v => {
       const agg = byVendor.get(v.id) ?? { revenue: 0, sales: 0 };
       const leads = leadCounts[v.id] ?? 0;
@@ -278,6 +267,7 @@ export default function AttributionPage() {
         cost, cpl, cpa, closeRate, roi, category: classify(roi, cost),
       };
     });
+
     const unassignedAgg = byVendor.get(null);
     if (unassignedAgg || unattributedLeads > 0) {
       rows.push({
@@ -294,7 +284,6 @@ export default function AttributionPage() {
   }, [vendors, sales, leads, leadCounts, unattributedLeads, months]);
 
   const totals = useMemo(() => {
-    // Top-line uses raw sales array — guarantees orphan vendor_ids still count.
     const revenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
     const salesCount = sales.length;
     const cost = perf.reduce((a, r) => a + r.cost, 0);
@@ -308,7 +297,6 @@ export default function AttributionPage() {
     };
   }, [sales, perf]);
 
-  // 12-month revenue trend
   const trend = useMemo(() => {
     const buckets: Record<string, number> = {};
     const now = new Date();
@@ -386,8 +374,6 @@ export default function AttributionPage() {
     downloadCsv(`sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
 
-  // A sale is "matched" once it's been linked to either a lead or a vendor
-  // (auto, manual, or via override). Status alone misses sales attributed by vendor only.
   const matchedSales = sales.filter(s => !!s.lead_id || !!s.vendor_id).length;
   const matchRate = sales.length > 0 ? matchedSales / sales.length : 0;
 
@@ -514,29 +500,19 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 font-medium">{r.vendorName}</td>
                     <td className="px-4 py-2 text-right">
                       {r.leads > 0 ? (
-                        <button
-                          type="button"
-                          className="font-medium text-primary underline-offset-2 hover:underline"
-                          onClick={() => setVendorLeadsView({ id: r.vendor?.id ?? null, name: r.vendorName })}
-                        >
+                        <button type="button" className="font-medium text-primary underline-offset-2 hover:underline"
+                          onClick={() => setVendorLeadsView({ id: r.vendor?.id ?? null, name: r.vendorName })}>
                           {r.leads}
                         </button>
-                      ) : (
-                        r.leads
-                      )}
+                      ) : r.leads}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {r.sales > 0 ? (
-                        <button
-                          type="button"
-                          className="font-medium text-primary underline-offset-2 hover:underline"
-                          onClick={() => setVendorSalesView({ id: r.vendor?.id ?? null, name: r.vendorName })}
-                        >
+                        <button type="button" className="font-medium text-primary underline-offset-2 hover:underline"
+                          onClick={() => setVendorSalesView({ id: r.vendor?.id ?? null, name: r.vendorName })}>
                           {r.sales}
                         </button>
-                      ) : (
-                        r.sales
-                      )}
+                      ) : r.sales}
                     </td>
                     <td className="px-4 py-2 text-right">{fmtPct(r.closeRate)}</td>
                     <td className="px-4 py-2 text-right">{r.cost > 0 ? fmtMoney(r.cost) : '—'}</td>
@@ -607,10 +583,8 @@ export default function AttributionPage() {
 
       <Dialog open={!!vendorSalesView} onOpenChange={(o) => !o && setVendorSalesView(null)}>
         <DialogContent className="max-w-4xl">
-          {(() => {
+          {vendorSalesView ? (() => {
             const knownVendorIds = new Set(vendors.map(v => v.id));
-
-            // Build VIN and stock lookup maps (same as perf useMemo)
             const allVinToVendors = new Map<string, Set<string>>();
             const allStockToVendors = new Map<string, Set<string>>();
             for (const l of leads) {
@@ -633,24 +607,17 @@ export default function AttributionPage() {
                 }
               }
             }
-
             const list = sales.filter(s => {
               const vin = s.vin ? s.vin.trim().toUpperCase() : '';
               const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
-
-              if (vendorSalesView?.id === null) {
-                // Unassigned: no vendor_id, no VIN match, no stock match
+              if (vendorSalesView.id === null) {
                 return !s.vendor_id &&
                   !(vin && allVinToVendors.has(vin)) &&
                   !(stock && allStockToVendors.has(stock));
               }
-
-              const vid = vendorSalesView!.id!;
-              // Priority 1: direct vendor_id
+              const vid = vendorSalesView.id;
               if (s.vendor_id === vid) return true;
-              // Priority 2: VIN match (only if sale has no vendor_id)
               if (!s.vendor_id && vin && allVinToVendors.get(vin)?.has(vid)) return true;
-              // Priority 3: stock_number match (only if sale has no vendor_id and no VIN match)
               if (!s.vendor_id && !vin && stock && allStockToVendors.get(stock)?.has(vid)) return true;
               return false;
             });
@@ -658,10 +625,8 @@ export default function AttributionPage() {
             return (
               <>
                 <DialogHeader>
-                  <DialogTitle>Sales attributed to {vendorSalesView?.name}</DialogTitle>
-                  <DialogDescription>
-                    {list.length} sale(s) · {fmtMoney(rev)} total price
-                  </DialogDescription>
+                  <DialogTitle>Sales attributed to {vendorSalesView.name}</DialogTitle>
+                  <DialogDescription>{list.length} sale(s) · {fmtMoney(rev)} total</DialogDescription>
                 </DialogHeader>
                 <div className="max-h-[60vh] overflow-auto">
                   <table className="w-full text-sm">
@@ -679,88 +644,72 @@ export default function AttributionPage() {
                     <tbody>
                       {list.map(s => (
                         <tr key={s.id} className="border-b hover:bg-muted/30">
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
-                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}</td>
                           <td className="px-3 py-2">{s.customer_full_name ?? '—'}</td>
                           <td className="px-3 py-2 text-muted-foreground font-mono text-xs">{s.vin ?? '—'}</td>
-                          <td className="px-3 py-2 text-muted-foreground">
-                            {[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}
-                          </td>
+                          <td className="px-3 py-2 text-muted-foreground">{[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}</td>
                           <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
                           <td className="px-3 py-2 text-right">{fmtMoney(Number(s.sale_price ?? 0))}</td>
                           <td className="px-3 py-2 text-center">
-                            <AttributionBadge
-                              status={s.attribution_status}
-                              confidence={s.attribution_confidence ?? 0}
-                              manual={s.manual_override}
-                            />
+                            <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
                           </td>
                         </tr>
                       ))}
                       {list.length === 0 && (
-                        <tr>
-                          <td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">
-                            No sales matched this vendor's lead VINs in the selected period.
-                          </td>
-                        </tr>
+                        <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">No sales matched this vendor in the selected period.</td></tr>
                       )}
                     </tbody>
                   </table>
                 </div>
               </>
             );
-          })()}
+          })() : null}
         </DialogContent>
       </Dialog>
 
       <Dialog open={!!vendorLeadsView} onOpenChange={(o) => !o && setVendorLeadsView(null)}>
         <DialogContent className="max-w-4xl">
-          <DialogHeader>
-            <DialogTitle>Leads attributed to {vendorLeadsView?.name}</DialogTitle>
-            <DialogDescription>
-              {(() => {
-                const list = leads.filter(l =>
-                  vendorLeadsView?.id === null ? !l.vendor_id : l.vendor_id === vendorLeadsView?.id
-                );
-                return `${list.length} lead(s)`;
-              })()}
-            </DialogDescription>
-          </DialogHeader>
-          <div className="max-h-[60vh] overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="sticky top-0 border-b bg-background text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left">Date</th>
-                  <th className="px-3 py-2 text-left">Customer</th>
-                  <th className="px-3 py-2 text-left">Email</th>
-                  <th className="px-3 py-2 text-left">Phone</th>
-                  <th className="px-3 py-2 text-left">Vehicle</th>
-                  <th className="px-3 py-2 text-left">Source</th>
-                  <th className="px-3 py-2 text-left">Status</th>
-                </tr>
-              </thead>
-              <tbody>
-                {leads
-                  .filter(l => vendorLeadsView?.id === null ? !l.vendor_id : l.vendor_id === vendorLeadsView?.id)
-                  .map(l => (
-                    <tr key={l.id} className="border-b hover:bg-muted/30">
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
-                      </td>
-                      <td className="px-3 py-2">{l.customer_full_name ?? '—'}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{l.customer_email ?? '—'}</td>
-                      <td className="px-3 py-2 text-muted-foreground">{l.customer_phone ?? '—'}</td>
-                      <td className="px-3 py-2 text-muted-foreground">
-                        {[l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || '—'}
-                      </td>
-                      <td className="px-3 py-2 text-muted-foreground">{l.source_label ?? '—'}</td>
-                      <td className="px-3 py-2"><Badge variant="outline">{l.lead_status}</Badge></td>
-                    </tr>
-                  ))}
-              </tbody>
-            </table>
-          </div>
+          {vendorLeadsView ? (() => {
+            const list = leads.filter(l =>
+              vendorLeadsView.id === null ? !l.vendor_id : l.vendor_id === vendorLeadsView.id
+            );
+            return (
+              <>
+                <DialogHeader>
+                  <DialogTitle>Leads attributed to {vendorLeadsView.name}</DialogTitle>
+                  <DialogDescription>{list.length} lead(s)</DialogDescription>
+                </DialogHeader>
+                <div className="max-h-[60vh] overflow-auto">
+                  <table className="w-full text-sm">
+                    <thead className="sticky top-0 border-b bg-background text-xs uppercase text-muted-foreground">
+                      <tr>
+                        <th className="px-3 py-2 text-left">Date</th>
+                        <th className="px-3 py-2 text-left">Customer</th>
+                        <th className="px-3 py-2 text-left">Email</th>
+                        <th className="px-3 py-2 text-left">Phone</th>
+                        <th className="px-3 py-2 text-left">Vehicle</th>
+                        <th className="px-3 py-2 text-left">Source</th>
+                        <th className="px-3 py-2 text-left">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {list.map(l => (
+                        <tr key={l.id} className="border-b hover:bg-muted/30">
+                          <td className="px-3 py-2 text-muted-foreground">{l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}</td>
+                          <td className="px-3 py-2">{l.customer_full_name ?? '—'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{l.customer_email ?? '—'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{l.customer_phone ?? '—'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{[l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || '—'}</td>
+                          <td className="px-3 py-2 text-muted-foreground">{l.source_label ?? '—'}</td>
+                          <td className="px-3 py-2"><Badge variant="outline">{l.lead_status}</Badge></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </>
+            );
+          })() : null}
         </DialogContent>
       </Dialog>
     </div>
