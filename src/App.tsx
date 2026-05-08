@@ -9,6 +9,7 @@ import ProtectedRoute from '@/components/ProtectedRoute';
 import AppLayout from '@/components/AppLayout';
 import RoleRouter from '@/components/RoleRouter';
 import AuthPage from '@/pages/Auth';
+import ResetPasswordPage from '@/pages/ResetPassword';
 import VendorsPage from '@/pages/Vendors';
 import LeadsPage from '@/pages/Leads';
 import UploadPage from '@/pages/Upload';
@@ -41,6 +42,7 @@ const App = () => (
           <ActiveOrgProvider>
             <Routes>
               <Route path="/auth" element={<AuthPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/accept-invite" element={<AcceptInvite />} />
 
               <Route

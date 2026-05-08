@@ -14,14 +14,20 @@ const emailSchema = z.string().trim().email({ message: 'Invalid email' }).max(25
 const passwordSchema = z.string().min(8, { message: 'Password must be at least 8 characters' }).max(72);
 const nameSchema = z.string().trim().min(1, { message: 'Name required' }).max(100);
 
+type LoginView = 'signin' | 'forgot';
+
 export default function AuthPage() {
   const navigate = useNavigate();
   const { user, loading } = useAuth();
   const [busy, setBusy] = useState(false);
 
   // login
+  const [loginView, setLoginView] = useState<LoginView>('signin');
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
+
+  // forgot password
+  const [forgotEmail, setForgotEmail] = useState('');
 
   // signup
   const [signupName, setSignupName] = useState('');
@@ -49,6 +55,25 @@ export default function AuthPage() {
       return;
     }
     toast.success('Signed in');
+  };
+
+  const handleForgotPassword = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const emailRes = emailSchema.safeParse(forgotEmail);
+    if (!emailRes.success) return toast.error(emailRes.error.errors[0].message);
+
+    setBusy(true);
+    const { error } = await supabase.auth.resetPasswordForEmail(emailRes.data, {
+      redirectTo: `${window.location.origin}/reset-password`,
+    });
+    setBusy(false);
+    if (error) {
+      toast.error(error.message);
+      return;
+    }
+    toast.success('Check your email for a reset link');
+    setForgotEmail('');
+    setLoginView('signin');
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -92,19 +117,61 @@ export default function AuthPage() {
             </TabsList>
 
             <TabsContent value="login">
-              <form onSubmit={handleLogin} className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="login-email">Email</Label>
-                  <Input id="login-email" type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} autoComplete="email" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="login-password">Password</Label>
-                  <Input id="login-password" type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} autoComplete="current-password" />
-                </div>
-                <Button type="submit" className="w-full" disabled={busy}>
-                  {busy ? 'Signing in...' : 'Sign In'}
-                </Button>
-              </form>
+              {loginView === 'signin' ? (
+                <form onSubmit={handleLogin} className="space-y-4 pt-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="login-email">Email</Label>
+                    <Input id="login-email" type="email" value={loginEmail} onChange={e => setLoginEmail(e.target.value)} autoComplete="email" />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="login-password">Password</Label>
+                    <Input id="login-password" type="password" value={loginPassword} onChange={e => setLoginPassword(e.target.value)} autoComplete="current-password" />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={busy}>
+                    {busy ? 'Signing in...' : 'Sign In'}
+                  </Button>
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => setLoginView('forgot')}
+                      className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      Forgot password?
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <form onSubmit={handleForgotPassword} className="space-y-4 pt-4">
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-semibold">Reset your password</h2>
+                    <p className="text-sm text-muted-foreground">
+                      Enter your email and we&apos;ll send you a reset link.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="forgot-email">Email</Label>
+                    <Input
+                      id="forgot-email"
+                      type="email"
+                      value={forgotEmail}
+                      onChange={e => setForgotEmail(e.target.value)}
+                      autoComplete="email"
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={busy}>
+                    {busy ? 'Sending...' : 'Send reset link'}
+                  </Button>
+                  <div className="text-center">
+                    <button
+                      type="button"
+                      onClick={() => setLoginView('signin')}
+                      className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      ← Back to sign in
+                    </button>
+                  </div>
+                </form>
+              )}
             </TabsContent>
 
             <TabsContent value="signup">
