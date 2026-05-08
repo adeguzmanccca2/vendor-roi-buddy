@@ -48,6 +48,7 @@ interface Sale {
   source_label: string | null;
   attribution_status: string;
   vendor_id: string | null;
+  lead_id: string | null;
   notes: string | null;
 }
 
@@ -182,7 +183,7 @@ export default function SalesPage() {
     const { data, error } = await supabase
       .from('sales')
       .select(
-        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, vendor_id, notes',
+        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, vendor_id, lead_id, notes',
       )
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false, nullsFirst: false })
@@ -493,6 +494,7 @@ export default function SalesPage() {
   }
 
   const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo) || vendorFilter !== '__all__';
+  const matchRate = sales.length > 0 ? Math.round(leadMatches.size / sales.length * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -515,6 +517,16 @@ export default function SalesPage() {
           </Button>
         </div>
       </div>
+
+      {/* Match rate summary — shows how many sales have been matched to a lead */}
+      {sales.length > 0 && (
+        <div className="flex items-center gap-3 text-sm">
+          <span className="rounded-md border border-border bg-muted px-3 py-1.5 font-medium text-foreground">
+            {leadMatches.size.toLocaleString()} of {sales.length.toLocaleString()} matched
+          </span>
+          <span className="text-muted-foreground">{matchRate}% match rate</span>
+        </div>
+      )}
 
       <Card>
         <CardHeader className="pb-3">
@@ -611,7 +623,7 @@ export default function SalesPage() {
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  <TableHead>Lead Match</TableHead>
+                  <SortHeader label="Lead Match" k="lead_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
