@@ -498,7 +498,7 @@ export default function SalesPage() {
             {matching ? 'Matching…' : 'Match Leads'}
           </Button>
           <Button variant="outline" size="sm" asChild>
- 		 <Link to="/sales-upload"><Upload className="mr-2 h-4 w-4" /> Upload sales</Link>
+ 		 <Link to="/sales/upload"><Upload className="mr-2 h-4 w-4" /> Upload sales</Link>
 	 </Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
