@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import { Link } from 'react-router-dom';
 import Papa from 'papaparse';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
@@ -34,7 +35,7 @@ const FIELDS = [
   { key: 'email', label: 'Email', candidates: ['email', 'e-mail', 'customer email'] },
   { key: 'phone', label: 'Phone', candidates: ['phone', 'mobile', 'cell', 'tel', 'phone number'] },
   { key: 'vehicle', label: 'Vehicle of interest', candidates: ['vehicle', 'voi', 'vehicle of interest', 'desired vehicle'] },
-  { key: 'lead_date', label: 'Lead date', candidates: ['lead date', 'date', 'created', 'submitted', 'timestamp'] },
+  { key: 'lead_date', label: 'Lead date', candidates: ['lead_date', 'lead date', 'date', 'created', 'timestamp', 'opportunities - lead submitted', 'buyer last activity'] },
   { key: 'source', label: 'Source label', candidates: ['source', 'lead source', 'origin'] },
   { key: 'vin', label: 'VIN', candidates: ['vin', 'vehicle vin', 'vin number'] },
   { key: 'year', label: 'Year', candidates: ['year', 'model year', 'vehicle year'] },
@@ -48,11 +49,180 @@ const FIELDS = [
   { key: 'total_vdp', label: 'Total VDP', candidates: ['total vdp', 'vdp', 'vdp total', 'vdps'] },
   { key: 'net_new_shoppers', label: 'Net new shoppers', candidates: ['net new shoppers', 'new shoppers', 'nns'] },
   { key: 'pct_sales_opps', label: '% Sales opps since campaign', candidates: ['percentage sales opportunities', 'sales opportunities', '% sales opps', 'pct sales opps', 'sales opps since campaign'] },
+  { key: 'type_of_vehicle', label: 'Type of vehicle', candidates: ['type of vehicle', 'vehicle type', 'veh type'] },
+  { key: 'type_of_leads', label: 'Type of leads', candidates: ['type of leads', 'lead type', 'leads type'] },
+  { key: 'stock_number', label: 'Stock number', candidates: ['stock number', 'stock#', 'stock no', 'stk', 'stk#', 'stk no'] },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
 
 const NONE = '__none__';
+
+// ---------------------------------------------------------------------------
+// Synthetic column name constants for JSON explode mode
+// WHY: We inject virtual columns into the header/row data so the user can
+// map them normally in the UI, just like any other column. These names are
+// prefixed with "JSON:" so they are clearly labelled and never clash with
+// real CSV column names.
+// ---------------------------------------------------------------------------
+const JSON_COL_DATE    = 'JSON: Lead Date';
+const JSON_COL_VEHICLE = 'JSON: Vehicle Title';
+const JSON_COL_STOCK   = 'JSON: Stock Number';
+
+// ---------------------------------------------------------------------------
+// Encoding helpers
+// ---------------------------------------------------------------------------
+
+/**
+ * Sniff whether a raw byte buffer looks like valid UTF-8.
+ * We scan up to the first 4 KB to keep it fast.
+ * If we find any byte sequence that's illegal in UTF-8, we assume Windows-1252.
+ */
+function looksLikeUtf8(buffer: ArrayBuffer): boolean {
+  const bytes = new Uint8Array(buffer, 0, Math.min(buffer.byteLength, 4096));
+  let i = 0;
+  while (i < bytes.length) {
+    const b = bytes[i];
+    let seqLen: number;
+    if (b <= 0x7f) {
+      seqLen = 1;
+    } else if (b >= 0xc2 && b <= 0xdf) {
+      seqLen = 2;
+    } else if (b >= 0xe0 && b <= 0xef) {
+      seqLen = 3;
+    } else if (b >= 0xf0 && b <= 0xf4) {
+      seqLen = 4;
+    } else {
+      return false;
+    }
+    for (let j = 1; j < seqLen; j++) {
+      if (i + j >= bytes.length) break;
+      if ((bytes[i + j] & 0xc0) !== 0x80) return false;
+    }
+    i += seqLen;
+  }
+  return true;
+}
+
+/**
+ * Read a File, auto-detect UTF-8 vs Windows-1252, and return the decoded string.
+ */
+function readFileWithEncodingDetection(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const buffer = reader.result as ArrayBuffer;
+      try {
+        const encoding = looksLikeUtf8(buffer) ? 'utf-8' : 'windows-1252';
+        const decoder = new TextDecoder(encoding);
+        resolve(decoder.decode(buffer));
+      } catch (e) {
+        const decoder = new TextDecoder('utf-8');
+        resolve(decoder.decode(buffer));
+      }
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Generic JSON column parser
+// WHY: Instead of hardcoding "Opportunities - Prospected Vehicles", we now
+// accept any column name the user selects. This makes the feature work for
+// any vendor — current or future — that puts JSON arrays in a CSV column.
+//
+// The JSON array format we expect (but handle loosely):
+//   [{ "Date": "5/4/2026", "Vehicle Title": "2022 Ford F-150", "Stock Number": "244238" }, ...]
+//
+// We return ALL entries in the array, not just the first, so the caller can
+// explode one CSV row into multiple lead records.
+// ---------------------------------------------------------------------------
+
+interface JsonVehicleEntry {
+  stock_number: string | null;
+  vehicle_title: string | null;
+  prospected_date: string | null;
+}
+
+function parseJsonColumn(raw: string): JsonVehicleEntry[] {
+  if (!raw || !raw.trim()) return [];
+
+  // Clean up common CSV export artifacts
+  const cleaned = raw
+    .replace(/^\uFEFF/, '')     // BOM
+    .replace(/^"+|"+$/g, '')    // wrapping double-quotes added by some exporters
+    .replace(/\r/g, '')         // carriage returns
+    .replace(/""/g, '"')        // CSV doubled-quotes "" → "
+    .replace(/\\"/g, '"')       // backslash-escaped quotes \" → "
+    .trim();
+
+  let parsed: any;
+  try {
+    parsed = JSON.parse(cleaned);
+  } catch (e) {
+    // Fallback: try to extract all Date/Vehicle Title/Stock Number entries via regex
+    // WHY: Some exporters produce slightly malformed JSON. We still want to get data out.
+    const dateMatches    = [...cleaned.matchAll(/"Date"\s*:\s*"([^"]*)"/g)];
+    const titleMatches   = [...cleaned.matchAll(/"Vehicle Title"\s*:\s*"([^"]*)"/g)];
+    const stockMatches   = [...cleaned.matchAll(/"Stock Number"\s*:\s*"([^"]*)"/g)];
+    const count = Math.max(dateMatches.length, stockMatches.length);
+    if (count === 0) return [];
+    return Array.from({ length: count }, (_, i) => ({
+      prospected_date: dateMatches[i]?.[1]?.trim() || null,
+      vehicle_title:   titleMatches[i]?.[1]?.trim() || null,
+      stock_number:    stockMatches[i]?.[1]?.trim() || null,
+    }));
+  }
+
+  // Normalize to array regardless of whether the JSON was an object or array
+  const arr: any[] = Array.isArray(parsed) ? parsed : [parsed];
+
+  return arr
+    .filter(entry => entry && typeof entry === 'object')
+    .map(entry => ({
+      stock_number:    (entry['Stock Number'] ?? '').toString().trim() || null,
+      vehicle_title:   (entry['Vehicle Title'] ?? '').toString().trim() || null,
+      prospected_date: (entry['Date'] ?? '').toString().trim() || null,
+    }));
+}
+
+// ---------------------------------------------------------------------------
+// Row exploder
+// WHY: When a CSV row contains a JSON column with N entries, we create N
+// separate flat rows — one per JSON entry — each carrying the same base
+// customer data but a different date/vehicle/stock from the JSON array.
+// Rows without JSON data (empty JSON column) are returned as-is (1 row in,
+// 1 row out), so normal files are completely unaffected.
+// ---------------------------------------------------------------------------
+
+function explodeRow(
+  row: Record<string, string>,
+  jsonColumnName: string,
+): Record<string, string>[] {
+  const raw = (row[jsonColumnName] ?? '').trim();
+  const entries = parseJsonColumn(raw);
+
+  if (entries.length === 0) {
+    // No JSON data — return original row with empty synthetic columns
+    return [{
+      ...row,
+      [JSON_COL_DATE]:    '',
+      [JSON_COL_VEHICLE]: '',
+      [JSON_COL_STOCK]:   '',
+    }];
+  }
+
+  // One output row per JSON entry
+  return entries.map(entry => ({
+    ...row,
+    [JSON_COL_DATE]:    entry.prospected_date ?? '',
+    [JSON_COL_VEHICLE]: entry.vehicle_title ?? '',
+    [JSON_COL_STOCK]:   entry.stock_number ?? '',
+  }));
+}
+
+// ---------------------------------------------------------------------------
 
 export default function UploadPage() {
   const { user } = useAuth();
@@ -66,41 +236,94 @@ export default function UploadPage() {
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ inserted: number; duplicates: number } | null>(null);
 
+  // ---------------------------------------------------------------------------
+  // JSON column mode state
+  // WHY: These two state values control the new generic JSON feature.
+  // hasJsonColumn = user declared this file has a JSON column (checkbox)
+  // jsonColumnName = which column they picked from the dropdown
+  // ---------------------------------------------------------------------------
+  const [hasJsonColumn, setHasJsonColumn] = useState(false);
+  const [jsonColumnName, setJsonColumnName] = useState<string>(NONE);
+
   useEffect(() => {
     if (!activeOrgId) return;
     supabase.from('vendors').select('id, name').eq('organization_id', activeOrgId).order('name')
       .then(({ data }) => setVendors((data ?? []) as Vendor[]));
   }, [activeOrgId]);
 
-  const onFile = (f: File | null) => {
+  // ---------------------------------------------------------------------------
+  // WHY: When the user enables JSON mode AND picks a column, we explode all
+  // rows immediately and inject the synthetic columns into headers/rows state
+  // so the mapping UI and previews reflect the exploded data automatically.
+  // ---------------------------------------------------------------------------
+  const effectiveRows = useMemo(() => {
+    if (!hasJsonColumn || jsonColumnName === NONE || rows.length === 0) return rows;
+    return rows.flatMap(row => explodeRow(row, jsonColumnName));
+  }, [rows, hasJsonColumn, jsonColumnName]);
+
+  const effectiveHeaders = useMemo(() => {
+    if (!hasJsonColumn || jsonColumnName === NONE) return headers;
+    const syntheticCols = [JSON_COL_DATE, JSON_COL_VEHICLE, JSON_COL_STOCK];
+    // Add synthetic columns only if not already present
+    const existing = new Set(headers);
+    const toAdd = syntheticCols.filter(c => !existing.has(c));
+    return [...headers, ...toAdd];
+  }, [headers, hasJsonColumn, jsonColumnName]);
+
+  // Auto-map synthetic columns to the right fields when JSON mode is activated
+  useEffect(() => {
+    if (!hasJsonColumn || jsonColumnName === NONE) return;
+    setMapping(prev => ({
+      ...prev,
+      lead_date:    JSON_COL_DATE,
+      vehicle:      JSON_COL_VEHICLE,
+      stock_number: JSON_COL_STOCK,
+    }));
+  }, [hasJsonColumn, jsonColumnName]);
+
+  const onFile = async (f: File | null) => {
     setFile(f);
     setRows([]);
     setHeaders([]);
     setResult(null);
+    setHasJsonColumn(false);
+    setJsonColumnName(NONE);
     if (!f) return;
-    Papa.parse<Record<string, string>>(f, {
+
+    let csvText: string;
+    try {
+      csvText = await readFileWithEncodingDetection(f);
+    } catch (err: any) {
+      toast.error(`Could not read file: ${err.message}`);
+      return;
+    }
+
+    Papa.parse<Record<string, string>>(csvText, {
       header: true,
       skipEmptyLines: true,
+      delimiter: '',
       complete: (res) => {
         const hdrs = res.meta.fields ?? [];
+        const data = res.data as Record<string, string>[];
         setHeaders(hdrs);
-        setRows(res.data);
-        // auto-map
+        setRows(data);
+
+        // Auto-map flat columns
         const m: Partial<Record<FieldKey, string>> = {};
-        for (const f of FIELDS) {
-          const guess = guessColumn(hdrs, [...f.candidates]);
-          if (guess) m[f.key] = guess;
+        for (const field of FIELDS) {
+          const guess = guessColumn(hdrs, [...field.candidates]);
+          if (guess) m[field.key] = guess;
         }
         setMapping(m as Record<FieldKey, string>);
-        toast.success(`Parsed ${res.data.length} rows`);
+        toast.success(`Parsed ${data.length} rows`);
       },
       error: (err) => toast.error(`CSV parse error: ${err.message}`),
     });
   };
 
-  const preview = useMemo(() => rows.slice(0, 5), [rows]);
+  const preview = useMemo(() => effectiveRows.slice(0, 5), [effectiveRows]);
 
-  // Build normalized preview — same logic as ingest, so what you see is what gets saved.
+  // Build normalized preview
   const normalizedPreview = useMemo(() => {
     if (preview.length === 0) return [] as Record<string, any>[];
     const get = (row: Record<string, string>, key: FieldKey) => {
@@ -117,16 +340,14 @@ export default function UploadPage() {
       const n = toNum(s);
       return n === null ? null : Math.round(n);
     };
-    return preview.map(row => {
+    return preview.map((row) => {
       const fullName = get(row, 'full_name') ||
         [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
       const email = get(row, 'email');
       const phone = get(row, 'phone');
-      const veh = get(row, 'vehicle');
+      const veh = get(row, 'vehicle') || '';
       const vin = get(row, 'vin');
       const parsed = parseVehicle(veh);
-      // Only auto-split full name when first/last columns are NOT explicitly mapped.
-      // If user set First/Last to "Skip", treat them as intentionally empty.
       const firstMapped = mapping['first_name'] && mapping['first_name'] !== NONE;
       const lastMapped = mapping['last_name'] && mapping['last_name'] !== NONE;
       const { first, last } = (!firstMapped && !lastMapped) ? splitName(fullName) : { first: '', last: '' };
@@ -155,20 +376,23 @@ export default function UploadPage() {
         pct_sales_opps_since_campaign: toNum(get(row, 'pct_sales_opps')),
         lead_date: parseLeadDate(get(row, 'lead_date')) ?? '(today — no value found)',
         source_label: get(row, 'source') || null,
+        type_of_vehicle: get(row, 'type_of_vehicle') || null,
+        type_of_leads: get(row, 'type_of_leads') || null,
+        stock_number: get(row, 'stock_number') || null,
         lead_status: 'new',
       };
     });
   }, [preview, mapping]);
 
-  // Sanity check: warn when name columns contain $ or pure numbers (sign of a misclassified column)
+  // Name column sanity check
   const nameWarnings = useMemo(() => {
-    if (rows.length === 0) return [] as { field: string; column: string; samples: string[]; count: number }[];
+    if (effectiveRows.length === 0) return [] as { field: string; column: string; samples: string[]; count: number }[];
     const fieldsToCheck: { key: FieldKey; label: string }[] = [
       { key: 'first_name', label: 'First name' },
       { key: 'last_name', label: 'Last name' },
       { key: 'full_name', label: 'Full name' },
     ];
-    const sample = rows.slice(0, 50);
+    const sample = effectiveRows.slice(0, 50);
     const out: { field: string; column: string; samples: string[]; count: number }[] = [];
     for (const f of fieldsToCheck) {
       const col = mapping[f.key];
@@ -183,11 +407,19 @@ export default function UploadPage() {
       }
     }
     return out;
-  }, [rows, mapping]);
+  }, [effectiveRows, mapping]);
 
+  // ---------------------------------------------------------------------------
+  // ingest — the import function
+  // WHY: We now iterate over effectiveRows (already exploded if JSON mode is on)
+  // instead of raw rows. Each exploded row becomes its own lead record with its
+  // own stock_number and lead_date from the JSON entry. The dedup hash includes
+  // stock_number + lead_date so two entries from the same customer but different
+  // vehicles/dates are treated as distinct leads (not duplicates).
+  // ---------------------------------------------------------------------------
   const ingest = async () => {
     if (!activeOrgId || !user || !file) return;
-    if (rows.length === 0) return toast.error('No rows to import');
+    if (effectiveRows.length === 0) return toast.error('No rows to import');
     setBusy(true);
     try {
       // 1. Create raw upload record
@@ -198,34 +430,46 @@ export default function UploadPage() {
           vendor_id: vendorId === NONE ? null : vendorId,
           uploaded_by: user.id,
           filename: file.name,
-          row_count: rows.length,
+          row_count: effectiveRows.length,
           column_mapping: mapping,
-          raw_rows: rows.slice(0, 1000), // cap for storage
+          raw_rows: rows.slice(0, 1000), // store original rows (pre-explode) capped for storage
         })
         .select('id')
         .single();
       if (upErr || !upload) throw upErr ?? new Error('Upload create failed');
 
-      // 2. Build leads with normalization + per-batch dedup
+      // 2. Build leads with normalization + dedup
       const get = (row: Record<string, string>, key: FieldKey) => {
         const col = mapping[key];
         if (!col || col === NONE) return '';
         return (row[col] ?? '').toString().trim();
       };
 
+      const toNum = (s: string): number | null => {
+        if (!s) return null;
+        const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
+        return isNaN(n) ? null : n;
+      };
+      const toInt = (s: string): number | null => {
+        const n = toNum(s);
+        return n === null ? null : Math.round(n);
+      };
+
       const seenHashes = new Set<string>();
       const toInsert: any[] = [];
       let dupesInBatch = 0;
 
-      for (const row of rows) {
+      for (const row of effectiveRows) {
         const fullName = get(row, 'full_name') ||
           [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
         const email = get(row, 'email');
         const phone = get(row, 'phone');
-        const veh = get(row, 'vehicle');
+        const veh = get(row, 'vehicle') || '';
         const vin = get(row, 'vin');
+        const stockNumber = get(row, 'stock_number') || null;
+        const leadDateRaw = get(row, 'lead_date');
 
-        // Skip only truly empty rows (no identifier of any kind)
+        // Skip truly empty rows
         if (!fullName && !email && !phone && !veh && !vin) continue;
 
         const normEmail = normalizeEmail(email);
@@ -235,29 +479,27 @@ export default function UploadPage() {
         const lastMapped = mapping['last_name'] && mapping['last_name'] !== NONE;
         const { first, last } = (!firstMapped && !lastMapped) ? splitName(fullName) : { first: '', last: '' };
 
-        // Prefer explicit Year/Make/Model columns; fall back to parsed VOI text
         const yearRaw = get(row, 'year');
         const yearNum = yearRaw ? parseInt(yearRaw, 10) : NaN;
         const explicitYear = !isNaN(yearNum) ? yearNum : null;
         const explicitMake = get(row, 'make') || null;
         const explicitModel = get(row, 'model') || null;
 
-        const toNum = (s: string): number | null => {
-          if (!s) return null;
-          const n = parseFloat(s.replace(/[^0-9.\-]/g, ''));
-          return isNaN(n) ? null : n;
-        };
-        const toInt = (s: string): number | null => {
-          const n = toNum(s);
-          return n === null ? null : Math.round(n);
-        };
-
+        // WHY: The dedup hash now includes stock_number AND lead_date.
+        // This means two exploded rows from the same customer but different
+        // vehicles (different stock + date) will each get a unique hash and
+        // both be inserted as separate lead records — which is exactly what
+        // we need for lead-to-sale matching later.
         const hash = await buildDedupHash({
           email: normEmail,
           phone: normPhone,
           name: normalizeName(fullName),
           vehicle: normalizeName(veh || vin),
+          vin: vin || null,
+          stock_number: stockNumber,
+          lead_date: parseLeadDate(leadDateRaw) ?? null,
         });
+
         if (seenHashes.has(hash)) { dupesInBatch++; continue; }
         seenHashes.add(hash);
 
@@ -286,8 +528,11 @@ export default function UploadPage() {
           total_vdp: toInt(get(row, 'total_vdp')),
           net_new_shoppers: toInt(get(row, 'net_new_shoppers')),
           pct_sales_opps_since_campaign: toNum(get(row, 'pct_sales_opps')),
-          lead_date: parseLeadDate(get(row, 'lead_date')) ?? new Date().toISOString(),
+          lead_date: parseLeadDate(leadDateRaw) ?? new Date().toISOString(),
           source_label: get(row, 'source') || null,
+          type_of_vehicle: get(row, 'type_of_vehicle') || null,
+          type_of_leads: get(row, 'type_of_leads') || null,
+          stock_number: stockNumber,
           lead_status: 'new',
         });
       }
@@ -323,7 +568,7 @@ export default function UploadPage() {
         }).eq('id', upload.id);
 
         setResult({ inserted, duplicates: dupesInBatch + existingDupes });
-        toast.success(`Imported ${inserted} leads (${dupesInBatch + existingDupes} duplicates skipped)`);
+        toast.success(`Imported ${inserted} leads (${dupesInBatch + existingDupes} duplicates skipped). Go to Leads to see the full list.`);
       } else {
         setResult({ inserted: 0, duplicates: dupesInBatch });
         toast.warning('No valid rows found');
@@ -346,12 +591,17 @@ export default function UploadPage() {
         </p>
       </div>
 
+      {/* Step 1: File + Vendor */}
       <Card>
         <CardHeader><CardTitle className="text-base">1. Choose file & vendor</CardTitle></CardHeader>
         <CardContent className="grid gap-4 md:grid-cols-2">
           <div className="grid gap-2">
             <Label>CSV file</Label>
-            <Input type="file" accept=".csv,text/csv" onChange={e => onFile(e.target.files?.[0] ?? null)} />
+            <Input
+              type="file"
+              accept=".csv,.tsv,.txt,text/csv,text/tab-separated-values,text/plain"
+              onChange={e => onFile(e.target.files?.[0] ?? null)}
+            />
           </div>
           <div className="grid gap-2">
             <Label>Vendor (lead source)</Label>
@@ -366,13 +616,75 @@ export default function UploadPage() {
         </CardContent>
       </Card>
 
+      {/* Step 2: JSON column declaration — only shown after a file is loaded */}
       {headers.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="text-base">2. JSON column (optional)</CardTitle>
+            <p className="text-xs text-muted-foreground mt-1">
+              Some vendors (e.g. TruckPro) store multiple vehicle entries as a JSON array inside one column.
+              Enable this if your file has such a column — each JSON entry will become its own lead record.
+            </p>
+          </CardHeader>
+          <CardContent className="grid gap-4">
+            {/* Checkbox */}
+            <div className="flex items-center gap-3">
+              <input
+                id="has-json-col"
+                type="checkbox"
+                className="h-4 w-4 cursor-pointer"
+                checked={hasJsonColumn}
+                onChange={e => {
+                  setHasJsonColumn(e.target.checked);
+                  if (!e.target.checked) {
+                    setJsonColumnName(NONE);
+                    // Remove auto-mapped synthetic columns from mapping
+                    setMapping(prev => {
+                      const next = { ...prev };
+                      if (next['lead_date'] === JSON_COL_DATE) delete next['lead_date'];
+                      if (next['vehicle'] === JSON_COL_VEHICLE) delete next['vehicle'];
+                      if (next['stock_number'] === JSON_COL_STOCK) delete next['stock_number'];
+                      return next;
+                    });
+                  }
+                }}
+              />
+              <Label htmlFor="has-json-col" className="cursor-pointer">
+                This file contains a JSON column
+              </Label>
+            </div>
+
+            {/* Column picker — shown only when checkbox is checked */}
+            {hasJsonColumn && (
+              <div className="grid gap-2 max-w-sm">
+                <Label className="text-xs">Which column contains the JSON?</Label>
+                <Select value={jsonColumnName} onValueChange={setJsonColumnName}>
+                  <SelectTrigger><SelectValue placeholder="Select column…" /></SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value={NONE}>— Select column —</SelectItem>
+                    {headers.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                  </SelectContent>
+                </Select>
+                {jsonColumnName !== NONE && (
+                  <p className="text-xs text-muted-foreground">
+                    ✓ Rows will be exploded — each JSON entry becomes a separate lead.
+                    <strong> {effectiveRows.length} total lead rows</strong> (from {rows.length} CSV rows).
+                  </p>
+                )}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
+
+      {effectiveHeaders.length > 0 && (
         <>
+          {/* Step 3: Map columns */}
           <Card>
             <CardHeader>
               <CardTitle className="text-base flex items-center gap-2">
-                <FileSpreadsheet className="h-4 w-4" /> 2. Map columns
-                <Badge variant="secondary" className="ml-2">{rows.length} rows</Badge>
+                <FileSpreadsheet className="h-4 w-4" /> 3. Map columns
+                <Badge variant="secondary" className="ml-2">{effectiveRows.length} rows</Badge>
               </CardTitle>
             </CardHeader>
             <CardContent className="grid gap-3 md:grid-cols-2">
@@ -386,7 +698,7 @@ export default function UploadPage() {
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
                       <SelectItem value={NONE}>— Skip —</SelectItem>
-                      {headers.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
+                      {effectiveHeaders.map(h => <SelectItem key={h} value={h}>{h}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
@@ -394,19 +706,20 @@ export default function UploadPage() {
             </CardContent>
           </Card>
 
+          {/* Step 4: Raw preview */}
           <Card>
-            <CardHeader><CardTitle className="text-base">3. Raw preview (first 5 rows)</CardTitle></CardHeader>
+            <CardHeader><CardTitle className="text-base">4. Raw preview (first 5 rows)</CardTitle></CardHeader>
             <CardContent className="overflow-x-auto">
               <table className="w-full text-xs">
                 <thead>
                   <tr className="border-b">
-                    {headers.map(h => <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>)}
+                    {effectiveHeaders.map(h => <th key={h} className="px-2 py-1 text-left font-medium">{h}</th>)}
                   </tr>
                 </thead>
                 <tbody>
                   {preview.map((r, i) => (
                     <tr key={i} className="border-b">
-                      {headers.map(h => <td key={h} className="px-2 py-1 text-muted-foreground">{r[h]}</td>)}
+                      {effectiveHeaders.map(h => <td key={h} className="px-2 py-1 text-muted-foreground">{r[h]}</td>)}
                     </tr>
                   ))}
                 </tbody>
@@ -414,9 +727,10 @@ export default function UploadPage() {
             </CardContent>
           </Card>
 
+          {/* Step 5: Mapped preview */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">4. Mapped preview — how it will be imported</CardTitle>
+              <CardTitle className="text-base">5. Mapped preview — how it will be imported</CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
                 Only mapped fields are shown. Yellow/red cells flag suspicious values (e.g. $ or pure numbers in name fields).
               </p>
@@ -467,9 +781,10 @@ export default function UploadPage() {
             </CardContent>
           </Card>
 
+          {/* Step 6: Normalized preview */}
           <Card>
             <CardHeader>
-              <CardTitle className="text-base">5. Final preview — first 5 records exactly as they will be saved</CardTitle>
+              <CardTitle className="text-base">6. Final preview — first 5 records exactly as they will be saved</CardTitle>
               <p className="text-xs text-muted-foreground mt-1">
                 Includes normalization: split first/last name, parsed year/make/model from VOI, parsed dates, normalized phone/email. Empty values display as <code className="px-1 rounded bg-muted">null</code>.
               </p>
@@ -522,7 +837,7 @@ export default function UploadPage() {
                     <li key={w.field}>
                       <strong>{w.field}</strong> is mapped to column <code className="px-1 rounded bg-muted">{w.column}</code> —
                       found {w.count} value(s) with $ or pure numbers (e.g. {w.samples.map(s => `"${s}"`).join(', ')}).
-                      This usually means the column contains a price or count, not a person's name. Re-map or set to “Skip”.
+                      This usually means the column contains a price or count, not a person's name. Re-map or set to "Skip".
                     </li>
                   ))}
                 </ul>
@@ -530,25 +845,45 @@ export default function UploadPage() {
             </Alert>
           )}
 
+          {/* Import button */}
           <div className="flex items-center justify-between gap-3">
             {result && (
-              <div className="text-sm">
-                <Badge className="mr-2">{result.inserted} inserted</Badge>
-                <Badge variant="secondary">{result.duplicates} duplicates skipped</Badge>
+              <div className="flex items-center gap-3">
+                <div className="text-sm">
+                  <Badge className="mr-2">{result.inserted} inserted</Badge>
+                  <Badge variant="secondary">{result.duplicates} duplicates skipped</Badge>
+                </div>
+                {result.inserted > 0 && (
+                  <Button variant="outline" asChild>
+                    <Link to="/leads">View Leads →</Link>
+                  </Button>
+                )}
               </div>
             )}
             <Button
               onClick={ingest}
-              disabled={busy || nameWarnings.length > 0}
+              disabled={busy || nameWarnings.length > 0 || vendorId === NONE || (hasJsonColumn && jsonColumnName === NONE)}
               className="ml-auto"
-              title={nameWarnings.length > 0 ? 'Fix name column mapping above to enable import' : undefined}
+              title={
+                vendorId === NONE
+                  ? 'Select a vendor before importing'
+                  : hasJsonColumn && jsonColumnName === NONE
+                  ? 'Select which column contains the JSON'
+                  : nameWarnings.length > 0
+                  ? 'Fix name column mapping above to enable import'
+                  : undefined
+              }
             >
               <UploadIcon className="mr-1 h-4 w-4" />
               {busy
                 ? 'Importing...'
-                : nameWarnings.length > 0
+                : vendorId === NONE
+                  ? 'Select a vendor to import'
+                  : hasJsonColumn && jsonColumnName === NONE
+                  ? 'Select JSON column to import'
+                  : nameWarnings.length > 0
                   ? 'Fix mapping to import'
-                  : `Import ${rows.length} rows`}
+                  : `Import ${effectiveRows.length} rows`}
             </Button>
           </div>
         </>

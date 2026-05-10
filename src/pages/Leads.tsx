@@ -9,7 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table';
-import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle, DialogTrigger } from '@/components/ui/dialog';
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -28,6 +28,9 @@ import {
 
 interface Vendor { id: string; name: string; is_active: boolean }
 interface Lead {
+  created_at: string | null;
+  customer_first_name: string | null;
+  customer_last_name: string | null;
   id: string;
   customer_full_name: string | null;
   customer_email: string | null;
@@ -42,6 +45,9 @@ interface Lead {
   vendor_id: string | null;
   manual_override: boolean;
   source_label: string | null;
+  type_of_vehicle: string | null;
+  type_of_leads: string | null;
+  stock_number: string | null;
 }
 
 const STATUS_OPTIONS = ['new', 'contacted', 'appointment', 'sold', 'lost'];
@@ -86,6 +92,7 @@ const emptyForm = {
   lead_status: 'new',
   vendor_id: 'none',
   notes: '',
+  stock_number: '',
 };
 
 export default function LeadsPage() {
@@ -101,6 +108,10 @@ export default function LeadsPage() {
   const [form, setForm] = useState({ ...emptyForm });
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [deleting, setDeleting] = useState(false);
+  const [dateDeleteOpen, setDateDeleteOpen] = useState(false);
+  const [deleteFrom, setDeleteFrom] = useState('');
+  const [deleteTo, setDeleteTo] = useState('');
+  const [deletingByDate, setDeletingByDate] = useState(false);
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -113,9 +124,9 @@ export default function LeadsPage() {
     const [{ data: l }, { data: v }] = await Promise.all([
       supabase
         .from('leads')
-        .select('id, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label')
+        .select('id, created_at, customer_first_name, customer_last_name, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label, type_of_vehicle, type_of_leads, stock_number')
         .eq('organization_id', activeOrgId)
-        .order('lead_date', { ascending: false, nullsFirst: false })
+        .order('created_at', { ascending: false, nullsFirst: false })
         .limit(1000),
       supabase.from('vendors').select('id, name, is_active').eq('organization_id', activeOrgId).order('name'),
     ]);
@@ -130,6 +141,11 @@ export default function LeadsPage() {
     l.vehicle_of_interest ||
     [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') ||
     '';
+
+  const customerName = (l: Lead) =>
+    [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ') ||
+    l.customer_full_name ||
+    '—';
 
   const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
@@ -190,6 +206,7 @@ export default function LeadsPage() {
       lead_status: l.lead_status,
       vendor_id: l.vendor_id ?? 'none',
       notes: '',
+      stock_number: l.stock_number ?? '',
     });
     setOpen(true);
   };
@@ -209,6 +226,8 @@ export default function LeadsPage() {
       phone: normPhone,
       name: normalizeName(fullName),
       vehicle: normalizeName(form.vehicle_of_interest),
+      vin: null,
+      stock_number: form.stock_number.trim() || null,
     });
 
     const payload = {
@@ -229,6 +248,7 @@ export default function LeadsPage() {
       lead_date: form.lead_date ? new Date(form.lead_date).toISOString() : new Date().toISOString(),
       lead_status: form.lead_status,
       notes: form.notes.trim() || null,
+      stock_number: form.stock_number.trim() || null,
       manual_override: true,
     };
 
@@ -277,6 +297,29 @@ export default function LeadsPage() {
     toast.success(`Deleted ${ids.length} lead${ids.length === 1 ? '' : 's'}`);
     setLeads(prev => prev.filter(l => !selected.has(l.id)));
     setSelected(new Set());
+  };
+
+  const deleteByDate = async () => {
+    if (!activeOrgId || !deleteFrom || !deleteTo) return;
+    setDeletingByDate(true);
+    const fromIso = new Date(`${deleteFrom}T00:00:00`).toISOString();
+    const toIso = new Date(`${deleteTo}T23:59:59.999`).toISOString();
+    const { data, error } = await supabase
+      .from('leads')
+      .delete()
+      .eq('organization_id', activeOrgId)
+      .gte('created_at', fromIso)
+      .lte('created_at', toIso)
+      .select('id');
+    setDeletingByDate(false);
+    if (error) return toast.error(error.message);
+    const count = data?.length ?? 0;
+    toast.success(`Deleted ${count} lead${count === 1 ? '' : 's'}`);
+    setDateDeleteOpen(false);
+    setDeleteFrom('');
+    setDeleteTo('');
+    setSelected(new Set());
+    load();
   };
 
   const deleteOne = async (id: string) => {
@@ -335,6 +378,8 @@ export default function LeadsPage() {
               customer: l.customer_full_name ?? '',
               email: l.customer_email ?? '',
               phone: l.customer_phone ?? '',
+              vin: l.vin ?? '',
+              stock_number: l.stock_number ?? '',
               vehicle: l.vehicle_of_interest ?? '',
               status: l.lead_status,
               vendor: l.vendor_id ? vMap.get(l.vendor_id) ?? '' : '',
@@ -343,6 +388,41 @@ export default function LeadsPage() {
           }} disabled={leads.length === 0}>
             <Download className="mr-1 h-4 w-4" /> Export
           </Button>
+          <Dialog open={dateDeleteOpen} onOpenChange={setDateDeleteOpen}>
+            <DialogTrigger asChild>
+              <Button variant="outline">
+                <Trash2 className="mr-1 h-4 w-4" /> Delete by date
+              </Button>
+            </DialogTrigger>
+            <DialogContent className="max-w-md">
+              <DialogHeader>
+                <DialogTitle>Delete leads by upload date</DialogTitle>
+                <DialogDescription>
+                  Permanently removes all leads uploaded within the selected date range. This cannot be undone.
+                </DialogDescription>
+              </DialogHeader>
+              <div className="grid grid-cols-2 gap-3 py-2">
+                <div className="grid gap-2">
+                  <Label>From</Label>
+                  <Input type="date" value={deleteFrom} onChange={e => setDeleteFrom(e.target.value)} />
+                </div>
+                <div className="grid gap-2">
+                  <Label>To</Label>
+                  <Input type="date" value={deleteTo} onChange={e => setDeleteTo(e.target.value)} />
+                </div>
+              </div>
+              <DialogFooter>
+                <Button variant="outline" onClick={() => setDateDeleteOpen(false)} disabled={deletingByDate}>Cancel</Button>
+                <Button
+                  onClick={deleteByDate}
+                  disabled={!deleteFrom || !deleteTo || deletingByDate}
+                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+                >
+                  Delete leads
+                </Button>
+              </DialogFooter>
+            </DialogContent>
+          </Dialog>
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild>
               <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Add lead</Button>
@@ -372,6 +452,14 @@ export default function LeadsPage() {
                     placeholder="2024 Ford F-150"
                     value={form.vehicle_of_interest}
                     onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })}
+                  />
+                </div>
+                <div className="grid gap-2">
+                  <Label>Stock #</Label>
+                  <Input
+                    placeholder="e.g. STK12345"
+                    value={form.stock_number}
+                    onChange={e => setForm({ ...form, stock_number: e.target.value })}
                   />
                 </div>
                 <div className="grid grid-cols-2 gap-3">
@@ -464,8 +552,9 @@ export default function LeadsPage() {
           ) : sorted.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No leads match.</p>
           ) : (
-            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-y-auto scrollbar-x-always rounded-md border border-border">
-              <Table className="min-w-[1400px]">
+            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto rounded-md border border-border pb-3">
+              <div className="min-w-[1400px]">
+              <Table>
                 <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
                   <TableRow>
                     <TableHead className="w-10">
@@ -475,13 +564,17 @@ export default function LeadsPage() {
                         aria-label="Select all"
                       />
                     </TableHead>
-                    <SortHeader label="Date" k="lead_date" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead className="whitespace-nowrap">Uploaded</TableHead>
+                    <TableHead className="whitespace-nowrap">Lead Date</TableHead>
                     <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                     <SortHeader label="Email" k="customer_email" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                     <TableHead>Phone</TableHead>
                     <SortHeader label="VIN" k="vin" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                    <TableHead>Stock #</TableHead>
                     <SortHeader label="Vehicle" k="vehicle" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                     <TableHead>Source</TableHead>
+		    <TableHead>Type of vehicle</TableHead>
+		    <TableHead>Type of leads</TableHead>
                     <SortHeader label="Vendor" k="vendor" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                     <SortHeader label="Status" k="lead_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                     <TableHead className="w-24 text-right">Actions</TableHead>
@@ -498,17 +591,23 @@ export default function LeadsPage() {
                         />
                       </TableCell>
                       <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                        {l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}
+                      </TableCell>
+                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
                         {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
                       </TableCell>
                       <TableCell className="font-medium">
-                        {l.customer_full_name ?? '—'}
+                        {customerName(l)}
                         {l.manual_override && <Badge variant="outline" className="ml-2 text-[10px]">manual</Badge>}
                       </TableCell>
                       <TableCell className="text-xs">{l.customer_email ?? '—'}</TableCell>
                       <TableCell className="whitespace-nowrap text-xs">{l.customer_phone ?? '—'}</TableCell>
                       <TableCell className="font-mono text-xs">{l.vin ?? '—'}</TableCell>
+                      <TableCell className="font-mono text-xs">{l.stock_number ?? '—'}</TableCell>
                       <TableCell className="text-sm">{vehicleStr(l) || '—'}</TableCell>
                       <TableCell className="text-xs text-muted-foreground">{l.source_label ?? '—'}</TableCell>
+		      <TableCell className="text-xs text-muted-foreground">{l.type_of_vehicle ?? '—'}</TableCell>
+		      <TableCell className="text-xs text-muted-foreground">{l.type_of_leads ?? '—'}</TableCell>
                       <TableCell>
                         <Select value={l.vendor_id ?? 'none'} onValueChange={v => updateVendor(l.id, v)}>
                           <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
@@ -558,6 +657,7 @@ export default function LeadsPage() {
                   ))}
                 </TableBody>
               </Table>
+              </div>
             </div>
           )}
         </CardContent>

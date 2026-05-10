@@ -63,14 +63,27 @@ export function parseVehicle(text?: string | null): { year: number | null; make:
 /**
  * Deterministic dedup hash from normalized identifiers.
  * Phone OR email is sufficient; falls back to name+vehicle.
+ * VIN and stock_number are strong unique identifiers and are included
+ * so records sharing either value are caught as duplicates.
  */
 export async function buildDedupHash(parts: {
   email: string | null;
   phone: string | null;
   name: string;
   vehicle: string;
+  vin?: string | null;
+  stock_number?: string | null;
+  lead_date?: string | null;
 }): Promise<string> {
-  const key = [parts.email ?? '', parts.phone ?? '', parts.name, parts.vehicle].join('|');
+  const key = [
+    parts.email ?? '',
+    parts.phone ?? '',
+    parts.name,
+    parts.vehicle,
+    (parts.vin ?? '').trim().toUpperCase(),
+    (parts.stock_number ?? '').trim().toUpperCase(),
+    (parts.lead_date ?? '').trim(),
+  ].join('|');
   const buf = new TextEncoder().encode(key);
   const hash = await crypto.subtle.digest('SHA-256', buf);
   return Array.from(new Uint8Array(hash))
