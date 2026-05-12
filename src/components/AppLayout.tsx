@@ -71,8 +71,17 @@ export default function AppLayout({ children }: { children: ReactNode }) {
 
         {!isAdmin && activeOrg && (
           <div className="border-b border-border p-3">
-            <p className="px-1 text-xs text-muted-foreground">Dealership</p>
-            <p className="px-1 text-sm font-medium text-foreground">{activeOrg.name}</p>
+            <p className="mb-1 px-1 text-xs font-medium text-muted-foreground">Dealership</p>
+            {orgs.length > 1 ? (
+              <Select value={activeOrgId ?? ''} onValueChange={v => setActiveOrgId(v)}>
+                <SelectTrigger className="h-8 text-xs"><SelectValue placeholder="Choose..." /></SelectTrigger>
+                <SelectContent>
+                  {orgs.map(o => <SelectItem key={o.id} value={o.id}>{o.name}</SelectItem>)}
+                </SelectContent>
+              </Select>
+            ) : (
+              <p className="px-1 text-sm font-medium text-foreground">{activeOrg.name}</p>
+            )}
           </div>
         )}
 
@@ -119,7 +128,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
           <h2 className="text-sm font-bold text-foreground">Vendor ROI</h2>
           <p className="truncate text-xs text-muted-foreground">{activeOrg?.name ?? (isAdmin ? 'Admin' : 'Dealership')}</p>
         </div>
-        {isAdmin && orgs.length > 0 && (
+        {(isAdmin || orgs.length > 1) && orgs.length > 0 && (
           <Select value={activeOrgId ?? ''} onValueChange={v => setActiveOrgId(v)}>
             <SelectTrigger className="h-8 w-32 text-xs"><SelectValue placeholder="Org" /></SelectTrigger>
             <SelectContent>

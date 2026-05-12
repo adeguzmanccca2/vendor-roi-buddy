@@ -282,6 +282,19 @@ export default function UploadPage() {
   }, [hasJsonColumn, jsonColumnName]);
 
   const onFile = async (f: File | null) => {
+    // WHY: Block non-CSV files immediately with a clear error. XLSX/XLS files
+    // cause silent date parsing failures and Select crashes. Only allow
+    // .csv, .tsv, and .txt which PapaParse handles correctly.
+    if (f) {
+      const allowed = ['.csv', '.tsv', '.txt'];
+      const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+      if (!allowed.includes(ext)) {
+        toast.error(`Unsupported file type: ${f.name}`, {
+          description: 'Please upload a CSV file. Excel files (.xlsx/.xls) are not supported — export your spreadsheet as CSV first.',
+        });
+        return;
+      }
+    }
     setFile(f);
     setRows([]);
     setHeaders([]);
@@ -303,7 +316,8 @@ export default function UploadPage() {
       skipEmptyLines: true,
       delimiter: '',
       complete: (res) => {
-        const hdrs = res.meta.fields ?? [];
+        // WHY: Radix UI Select crashes if any SelectItem has value="". Filter empty headers.
+        const hdrs = (res.meta.fields ?? []).filter(h => h.trim() !== '');
         const data = res.data as Record<string, string>[];
         setHeaders(hdrs);
         setRows(data);

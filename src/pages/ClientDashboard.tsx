@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
+import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -18,6 +19,7 @@ const fmtMoney = (n: number) =>
 
 export default function ClientDashboard() {
   const { profile } = useAuth();
+  const { activeOrgId, activeOrg: activeOrgMeta } = useActiveOrg();
   const [org, setOrg] = useState<Org | null>(null);
   const [loading, setLoading] = useState(true);
   const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0, monthlyCost: 0 });
@@ -25,11 +27,18 @@ export default function ClientDashboard() {
   const [exportRows, setExportRows] = useState<Record<string, any>[]>([]);
 
   useEffect(() => {
-    if (!profile?.organization_id) {
+    if (!activeOrgId) {
       setLoading(false);
       return;
     }
-    const orgId = profile.organization_id;
+    // WHY: Reset all stats immediately when org changes so stale numbers
+    // from the previous org never show while the new fetch is in flight.
+    setStats({ leads: 0, sales: 0, revenue: 0, monthlyCost: 0 });
+    setTrendSales([]);
+    setExportRows([]);
+    setOrg(null);
+    setLoading(true);
+    const orgId = activeOrgId;
     const now = new Date();
     const mtdStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
@@ -57,7 +66,7 @@ export default function ClientDashboard() {
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
-  }, [profile?.organization_id]);
+  }, [activeOrgId]);
 
   // Pro-rate cost to month-to-date elapsed days for fair MTD ROI.
   const mtdCost = useMemo(() => {
@@ -90,7 +99,7 @@ export default function ClientDashboard() {
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
-  if (!profile?.organization_id) {
+  if (!activeOrgId) {
     return (
       <div className="space-y-6">
         <h1 className="text-2xl font-bold text-foreground">Welcome</h1>
@@ -115,7 +124,7 @@ export default function ClientDashboard() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">{org?.name ?? 'Dashboard'}</h1>
+          <h1 className="text-2xl font-bold text-foreground">{activeOrgMeta?.name ?? org?.name ?? 'Dashboard'}</h1>
           <p className="text-sm text-muted-foreground">Month-to-date · trend over last 12 months</p>
         </div>
         <div className="flex gap-2">
@@ -133,7 +142,7 @@ export default function ClientDashboard() {
         <Stat
           icon={TrendingUp}
           label="ROI (MTD)"
-          value={mtdCost > 0 ? `${(roi * 100).toFixed(0)}%` : '—'}
+          value={mtdCost > 0 && stats.sales > 0 ? `${(roi * 100).toFixed(0)}%` : '—'}
           sub={`Cost ${fmtMoney(mtdCost)}`}
         />
       </div>

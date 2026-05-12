@@ -77,6 +77,15 @@ export default function SalesUploadPage() {
   const [importStatus, setImportStatus] = useState<string | null>(null);
 
   const onFile = (f: File | null) => {
+    if (f) {
+      const ext = '.' + f.name.split('.').pop()?.toLowerCase();
+      if (!['.csv', '.tsv', '.txt'].includes(ext)) {
+        toast.error(`Unsupported file type: ${f.name}`, {
+          description: 'Please upload a CSV file. Export your Excel spreadsheet as CSV first.',
+        });
+        return;
+      }
+    }
     setFile(f);
     setRows([]);
     setHeaders([]);
@@ -89,7 +98,8 @@ export default function SalesUploadPage() {
       header: true,
       skipEmptyLines: true,
       complete: (res) => {
-        const hdrs = res.meta.fields ?? [];
+        // WHY: Filter empty headers — Radix Select crashes on value="".
+        const hdrs = (res.meta.fields ?? []).filter(h => h.trim() !== '');
         setHeaders(hdrs);
         setRows(res.data);
         const m: Partial<Record<FieldKey, string>> = {};
@@ -187,9 +197,13 @@ export default function SalesUploadPage() {
           const front = normalizeRevenue(get(row, 'front_gross')) ?? 0;
           const back = normalizeRevenue(get(row, 'back_gross')) ?? 0;
           const totalCol = normalizeRevenue(get(row, 'total_gross'));
-          const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
-          const total = totalCol ?? ((front + back) || gross);
           const salePrice = normalizeRevenue(get(row, 'sale_price'));
+          // WHY: Fall back to salePrice if no gross columns exist in the CSV.
+          // Many DMS exports only have 'Sale Price' with no separate gross fields.
+          // This ensures revenue is always populated so attribution ROI works.
+          const gross = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back) || salePrice || 0;
+          const total = totalCol ?? ((front + back) || gross) || salePrice || 0;
+          const effectiveSalePrice = salePrice ?? total ?? gross ?? null;
 
           // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
           const dealKey = dmsId || stock || vin;
@@ -242,7 +256,7 @@ export default function SalesUploadPage() {
             front_gross: front,
             back_gross: back,
             total_gross: total,
-            sale_price: salePrice,
+            sale_price: effectiveSalePrice,
             attribution_status: 'unmatched',
           });
         } catch (rowErr: any) {

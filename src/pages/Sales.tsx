@@ -21,7 +21,7 @@ import {
 } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Pencil, Trash2, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown, Upload } from 'lucide-react';
+import { Pencil, Trash2, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown, Upload, CalendarX } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { downloadCsv } from '@/lib/exportCsv';
 import { normalizePhone, normalizeEmail } from '@/lib/normalize';
@@ -128,6 +128,17 @@ export default function SalesPage() {
   const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult>>(new Map());
   const [matching, setMatching] = useState(false);
 
+  // ── Date-range delete state ──────────────────────────────────────────────
+  // Why: we keep this separate from the normal confirmDelete flow because it
+  // needs its own date inputs, a preview count, and a Supabase query by date
+  // range rather than by a list of IDs.
+  const [dateDeleteOpen, setDateDeleteOpen] = useState(false);
+  const [deleteRangeFrom, setDeleteRangeFrom] = useState('');
+  const [deleteRangeTo, setDeleteRangeTo] = useState('');
+  const [deleteRangeCount, setDeleteRangeCount] = useState<number | null>(null);
+  const [dateDeleteConfirmOpen, setDateDeleteConfirmOpen] = useState(false);
+  const [deletingByDate, setDeletingByDate] = useState(false);
+
   const vendorMap = useMemo(() => {
     const m = new Map<string, string>();
     vendorList.forEach(v => m.set(v.id, v.name));
@@ -137,8 +148,13 @@ export default function SalesPage() {
   // Build lead matches from already-saved attribution data when sales and vendors load.
   // Why: saves already have vendor_id and attribution_status stored from previous Match Leads runs,
   // so we can show the match column instantly without any extra API calls.
+  // WHY: We removed the vendorList.length === 0 guard that caused the race condition.
+  // Previously, if sales loaded before vendors, this effect bailed out early and never
+  // re-ran correctly. Now we only guard on sales.length — vendorMap is already a useMemo
+  // that re-computes when vendorList changes, so this effect naturally re-runs when
+  // vendors arrive and vendorMap updates, populating leadMatches correctly every time.
   useEffect(() => {
-    if (sales.length === 0 || vendorList.length === 0) return;
+    if (sales.length === 0) return;
     const result = new Map<string, MatchResult>();
     for (const sale of sales) {
       if (sale.vendor_id && (sale.attribution_status === 'auto' || sale.attribution_status === 'manual')) {
@@ -150,7 +166,7 @@ export default function SalesPage() {
       }
     }
     setLeadMatches(result);
-  }, [sales, vendorList, vendorMap]);
+  }, [sales, vendorMap]);
 
   const toggleSort = (key: keyof Sale) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -355,6 +371,56 @@ export default function SalesPage() {
     void load();
   };
 
+  // ── Date-range delete helpers ────────────────────────────────────────────
+
+  // Why: before showing the final confirmation we run a COUNT query so the
+  // user sees exactly how many records will be removed — no surprises.
+  const previewDateRangeCount = async () => {
+    if (!activeOrgId || !deleteRangeFrom || !deleteRangeTo) return;
+    const fromIso = new Date(deleteRangeFrom).toISOString();
+    // Add 1 day - 1ms so "to" date is inclusive of the full day.
+    const toIso = new Date(new Date(deleteRangeTo).getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
+    const { count, error } = await supabase
+      .from('sales')
+      .select('id', { count: 'exact', head: true })
+      .eq('organization_id', activeOrgId)
+      .gte('sale_date', fromIso)
+      .lte('sale_date', toIso);
+    if (error) {
+      toast.error('Could not count records', { description: error.message });
+      return;
+    }
+    setDeleteRangeCount(count ?? 0);
+    setDateDeleteOpen(false);
+    setDateDeleteConfirmOpen(true);
+  };
+
+  // Why: we do the actual Supabase delete here using gte/lte on sale_date,
+  // scoped to the org so we never touch another org's data.
+  const doDateRangeDelete = async () => {
+    if (!activeOrgId || !deleteRangeFrom || !deleteRangeTo) return;
+    setDeletingByDate(true);
+    const fromIso = new Date(deleteRangeFrom).toISOString();
+    const toIso = new Date(new Date(deleteRangeTo).getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
+    const { error } = await supabase
+      .from('sales')
+      .delete()
+      .eq('organization_id', activeOrgId)
+      .gte('sale_date', fromIso)
+      .lte('sale_date', toIso);
+    setDeletingByDate(false);
+    if (error) {
+      toast.error('Delete failed', { description: error.message });
+    } else {
+      toast.success(`Deleted ${deleteRangeCount ?? 'matching'} sale(s) between ${deleteRangeFrom} and ${deleteRangeTo}`);
+      setDateDeleteConfirmOpen(false);
+      setDeleteRangeFrom('');
+      setDeleteRangeTo('');
+      setDeleteRangeCount(null);
+      void load();
+    }
+  };
+
   const matchLeads = async () => {
     if (!activeOrgId) return;
     setMatching(true);
@@ -391,7 +457,7 @@ export default function SalesPage() {
     }
 
     const result = new Map<string, MatchResult>();
-    type SaleUpdate = { id: string; vendor_id: string; lead_id: string; confidence: number };
+    type SaleUpdate = { id: string; vendor_id: string | null; lead_id: string; confidence: number; assignVendor: boolean };
     const updates: SaleUpdate[] = [];
 
     for (const sale of sales) {
@@ -428,9 +494,17 @@ export default function SalesPage() {
           matchMethod: method,
           vendorName: matched.vendorId ? vendorMap.get(matched.vendorId) ?? null : null,
         });
-        if (matched.vendorId && !sale.vendor_id) {
-          updates.push({ id: sale.id, vendor_id: matched.vendorId, lead_id: matched.leadId, confidence });
-        }
+        // WHY: We always push an update when a match is found so lead_id is
+        // saved to the DB. Vendor assignment only happens if the matched lead
+        // has a vendor AND the sale doesn't already have one (protects manual
+        // assignments). But lead_id should always be saved regardless.
+        updates.push({
+          id: sale.id,
+          lead_id: matched.leadId,
+          vendor_id: matched.vendorId && !sale.vendor_id ? matched.vendorId : (sale.vendor_id ?? null),
+          confidence,
+          assignVendor: !!(matched.vendorId && !sale.vendor_id),
+        });
       }
     }
 
@@ -438,14 +512,18 @@ export default function SalesPage() {
 
     if (updates.length > 0) {
       await Promise.all(
-        updates.map(u =>
-          supabase.from('sales').update({
-            vendor_id: u.vendor_id,
+        updates.map(u => {
+          const payload: any = {
             lead_id: u.lead_id,
             attribution_status: 'auto',
             attribution_confidence: u.confidence,
-          }).eq('id', u.id),
-        ),
+          };
+          // Only overwrite vendor if the sale didn't already have one
+          if (u.assignVendor) {
+            payload.vendor_id = u.vendor_id;
+          }
+          return supabase.from('sales').update(payload).eq('id', u.id);
+        }),
       );
       void load();
     }
@@ -514,6 +592,22 @@ export default function SalesPage() {
           </Button>
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
+          </Button>
+          {/* Why: date-range delete is in the toolbar so admins can quickly
+              wipe a bad import batch without touching individual rows. */}
+          <Button
+            variant="outline"
+            size="sm"
+            className="text-destructive border-destructive/40 hover:bg-destructive/10"
+            onClick={() => {
+              setDeleteRangeFrom('');
+              setDeleteRangeTo('');
+              setDeleteRangeCount(null);
+              setDateDeleteOpen(true);
+            }}
+            disabled={sales.length === 0}
+          >
+            <CalendarX className="mr-2 h-4 w-4" /> Delete by date
           </Button>
         </div>
       </div>
@@ -697,6 +791,7 @@ export default function SalesPage() {
         </CardContent>
       </Card>
 
+      {/* ── Edit dialog ───────────────────────────────────────────────────── */}
       <Dialog open={!!editing} onOpenChange={open => !open && setEditing(null)}>
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader><DialogTitle>Edit sale</DialogTitle></DialogHeader>
@@ -785,6 +880,7 @@ export default function SalesPage() {
         </DialogContent>
       </Dialog>
 
+      {/* ── Row/selection delete confirmation ─────────────────────────────── */}
       <AlertDialog open={!!confirmDelete} onOpenChange={open => !open && setConfirmDelete(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -796,6 +892,74 @@ export default function SalesPage() {
           <AlertDialogFooter>
             <AlertDialogCancel>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={doDelete} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
+      {/* ── Date-range delete: pick dates dialog ──────────────────────────── */}
+      <Dialog open={dateDeleteOpen} onOpenChange={setDateDeleteOpen}>
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Delete sales by date range</DialogTitle>
+          </DialogHeader>
+          <p className="text-sm text-muted-foreground">
+            Permanently delete all sales whose <strong>sale date</strong> falls within the range below.
+            You will see a count before confirming.
+          </p>
+          <div className="grid grid-cols-2 gap-4 pt-2">
+            <div>
+              <Label>From date</Label>
+              <Input
+                type="date"
+                value={deleteRangeFrom}
+                onChange={e => setDeleteRangeFrom(e.target.value)}
+              />
+            </div>
+            <div>
+              <Label>To date</Label>
+              <Input
+                type="date"
+                value={deleteRangeTo}
+                onChange={e => setDeleteRangeTo(e.target.value)}
+              />
+            </div>
+          </div>
+          <DialogFooter className="pt-2">
+            <Button variant="outline" onClick={() => setDateDeleteOpen(false)}>Cancel</Button>
+            <Button
+              variant="destructive"
+              disabled={!deleteRangeFrom || !deleteRangeTo || deleteRangeFrom > deleteRangeTo}
+              onClick={previewDateRangeCount}
+            >
+              Preview &amp; confirm
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* ── Date-range delete: final confirmation with count ──────────────── */}
+      <AlertDialog open={dateDeleteConfirmOpen} onOpenChange={open => !open && setDateDeleteConfirmOpen(false)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteRangeCount ?? '…'} sales?</AlertDialogTitle>
+            <AlertDialogDescription>
+              This will permanently delete{' '}
+              <strong>{deleteRangeCount ?? '…'} sale record{deleteRangeCount !== 1 ? 's' : ''}</strong>{' '}
+              with a sale date between <strong>{deleteRangeFrom}</strong> and <strong>{deleteRangeTo}</strong>.
+              This cannot be undone.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setDateDeleteConfirmOpen(false); setDateDeleteOpen(true); }}>
+              Back
+            </AlertDialogCancel>
+            <AlertDialogAction
+              onClick={doDateRangeDelete}
+              disabled={deletingByDate}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deletingByDate ? 'Deleting…' : `Delete ${deleteRangeCount ?? ''} record${deleteRangeCount !== 1 ? 's' : ''}`}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

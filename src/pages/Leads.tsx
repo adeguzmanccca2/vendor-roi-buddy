@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload } from 'lucide-react';
+import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -28,10 +28,10 @@ import {
 
 interface Vendor { id: string; name: string; is_active: boolean }
 interface Lead {
+  id: string;
   created_at: string | null;
   customer_first_name: string | null;
   customer_last_name: string | null;
-  id: string;
   customer_full_name: string | null;
   customer_email: string | null;
   customer_phone: string | null;
@@ -51,48 +51,33 @@ interface Lead {
 }
 
 const STATUS_OPTIONS = ['new', 'contacted', 'appointment', 'sold', 'lost'];
+const PAGE_SIZE = 100;
 
-type SortKey = 'lead_date' | 'customer_full_name' | 'customer_email' | 'vin' | 'vehicle' | 'vendor' | 'lead_status';
+// WHY: SortKey maps to actual DB column names so we can pass them directly
+// to Supabase .order() for server-side sorting.
+type SortKey = 'created_at' | 'lead_date' | 'customer_full_name' | 'customer_email' | 'vin' | 'lead_status';
 
-function SortHeader({
-  label,
-  k,
-  sortKey,
-  sortDir,
-  onClick,
-}: {
-  label: string;
-  k: SortKey;
-  sortKey: SortKey;
-  sortDir: 'asc' | 'desc';
-  onClick: (k: SortKey) => void;
+const SELECT_FIELDS = 'id, created_at, customer_first_name, customer_last_name, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label, type_of_vehicle, type_of_leads, stock_number';
+
+function SortHeader({ label, k, sortKey, sortDir, onClick }: {
+  label: string; k: SortKey; sortKey: SortKey; sortDir: 'asc' | 'desc'; onClick: (k: SortKey) => void;
 }) {
   const active = sortKey === k;
   const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
   return (
     <TableHead>
-      <button
-        type="button"
-        onClick={() => onClick(k)}
-        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'}`}
-      >
-        {label}
-        <Icon className="h-3 w-3" />
+      <button type="button" onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'}`}>
+        {label}<Icon className="h-3 w-3" />
       </button>
     </TableHead>
   );
 }
 
 const emptyForm = {
-  customer_full_name: '',
-  customer_email: '',
-  customer_phone: '',
-  vehicle_of_interest: '',
-  lead_date: '',
-  lead_status: 'new',
-  vendor_id: 'none',
-  notes: '',
-  stock_number: '',
+  customer_full_name: '', customer_email: '', customer_phone: '',
+  vehicle_of_interest: '', lead_date: '', lead_status: 'new',
+  vendor_id: 'none', notes: '', stock_number: '',
 };
 
 export default function LeadsPage() {
@@ -100,9 +85,16 @@ export default function LeadsPage() {
   const [leads, setLeads] = useState<Lead[]>([]);
   const [vendors, setVendors] = useState<Vendor[]>([]);
   const [loading, setLoading] = useState(true);
-  const [filter, setFilter] = useState({ vendor: 'all', status: 'all', search: '', vin: '' });
-  const [sortKey, setSortKey] = useState<SortKey>('lead_date');
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(0);
+
+  const [search, setSearch] = useState('');
+  const [vinSearch, setVinSearch] = useState('');
+  const [vendorFilter, setVendorFilter] = useState('all');
+  const [statusFilter, setStatusFilter] = useState('all');
+  const [sortKey, setSortKey] = useState<SortKey>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
+
   const [open, setOpen] = useState(false);
   const [editing, setEditing] = useState<Lead | null>(null);
   const [form, setForm] = useState({ ...emptyForm });
@@ -114,84 +106,75 @@ export default function LeadsPage() {
   const [deletingByDate, setDeletingByDate] = useState(false);
 
   const toggleSort = (k: SortKey) => {
-    if (sortKey === k) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(k); setSortDir('asc'); }
+    setPage(0);
   };
 
-  const load = async () => {
-    if (!activeOrgId) { setLeads([]); setVendors([]); setLoading(false); return; }
+  // ---------------------------------------------------------------------------
+  // WHY useCallback + useEffect: load() depends on all filter/sort/page state.
+  // useCallback memoizes it so useEffect only re-runs when dependencies change.
+  // Every filter change resets page to 0 via the apply* helpers below.
+  // ---------------------------------------------------------------------------
+  const load = useCallback(async () => {
+    if (!activeOrgId) { setLeads([]); setTotalCount(0); setLoading(false); return; }
     setLoading(true);
-    const [{ data: l }, { data: v }] = await Promise.all([
-      supabase
-        .from('leads')
-        .select('id, created_at, customer_first_name, customer_last_name, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label, type_of_vehicle, type_of_leads, stock_number')
-        .eq('organization_id', activeOrgId)
-        .order('created_at', { ascending: false, nullsFirst: false })
-        .limit(1000),
-      supabase.from('vendors').select('id, name, is_active').eq('organization_id', activeOrgId).order('name'),
-    ]);
-    setLeads((l ?? []) as Lead[]);
-    setVendors((v ?? []) as Vendor[]);
-    setLoading(false);
-  };
 
-  useEffect(() => { load(); }, [activeOrgId]);
+    const buildQuery = (q: any) => {
+      q = q.eq('organization_id', activeOrgId);
+      if (vendorFilter === 'unassigned') q = q.is('vendor_id', null);
+      else if (vendorFilter !== 'all') q = q.eq('vendor_id', vendorFilter);
+      if (statusFilter !== 'all') q = q.eq('lead_status', statusFilter);
+      if (vinSearch.trim()) q = q.ilike('vin', `%${vinSearch.trim()}%`);
+      if (search.trim()) {
+        const s = search.trim();
+        q = q.or(
+          `customer_full_name.ilike.%${s}%,customer_first_name.ilike.%${s}%,customer_last_name.ilike.%${s}%,customer_email.ilike.%${s}%,customer_phone.ilike.%${s}%,vehicle_of_interest.ilike.%${s}%,stock_number.ilike.%${s}%,source_label.ilike.%${s}%`
+        );
+      }
+      return q;
+    };
+
+    const from = page * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const [countResult, dataResult] = await Promise.all([
+      buildQuery(supabase.from('leads').select('id', { count: 'exact', head: true })),
+      buildQuery(supabase.from('leads').select(SELECT_FIELDS))
+        .order(sortKey, { ascending: sortDir === 'asc', nullsFirst: false })
+        .range(from, to),
+    ]);
+
+    setTotalCount(countResult.count ?? 0);
+    setLeads((dataResult.data ?? []) as Lead[]);
+    setLoading(false);
+  }, [activeOrgId, page, search, vinSearch, vendorFilter, statusFilter, sortKey, sortDir]);
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    supabase.from('vendors').select('id, name, is_active').eq('organization_id', activeOrgId).order('name')
+      .then(({ data }) => setVendors((data ?? []) as Vendor[]));
+  }, [activeOrgId]);
+
+  useEffect(() => { load(); }, [load]);
+
+  const applySearch = (val: string) => { setSearch(val); setPage(0); };
+  const applyVin = (val: string) => { setVinSearch(val); setPage(0); };
+  const applyVendor = (val: string) => { setVendorFilter(val); setPage(0); };
+  const applyStatus = (val: string) => { setStatusFilter(val); setPage(0); };
+
+  const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
   const vehicleStr = (l: Lead) =>
     l.vehicle_of_interest ||
-    [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') ||
-    '';
+    [l.vehicle_year, l.vehicle_make, l.vehicle_model].filter(Boolean).join(' ') || '';
 
   const customerName = (l: Lead) =>
     [l.customer_first_name, l.customer_last_name].filter(Boolean).join(' ') ||
-    l.customer_full_name ||
-    '—';
+    l.customer_full_name || '—';
 
-  const vendorName = (id: string | null) => id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
-
-  const filtered = useMemo(() => {
-    const vinQ = filter.vin.trim().toLowerCase();
-    const q = filter.search.trim().toLowerCase();
-    return leads.filter(l => {
-      if (filter.vendor !== 'all') {
-        if (filter.vendor === 'unassigned' && l.vendor_id) return false;
-        if (filter.vendor !== 'unassigned' && l.vendor_id !== filter.vendor) return false;
-      }
-      if (filter.status !== 'all' && l.lead_status !== filter.status) return false;
-      if (vinQ && !(l.vin ?? '').toLowerCase().includes(vinQ)) return false;
-      if (q) {
-        const hay = `${l.customer_full_name ?? ''} ${l.customer_email ?? ''} ${l.customer_phone ?? ''} ${l.vehicle_of_interest ?? ''} ${l.vin ?? ''} ${vendorName(l.vendor_id)} ${l.source_label ?? ''}`.toLowerCase();
-        if (!hay.includes(q)) return false;
-      }
-      return true;
-    });
-  }, [leads, filter, vendors]);
-
-  const sorted = useMemo(() => {
-    const arr = [...filtered];
-    const dir = sortDir === 'asc' ? 1 : -1;
-    const getVal = (l: Lead): string | number | null => {
-      switch (sortKey) {
-        case 'lead_date': return l.lead_date ? new Date(l.lead_date).getTime() : null;
-        case 'customer_full_name': return l.customer_full_name;
-        case 'customer_email': return l.customer_email;
-        case 'vin': return l.vin;
-        case 'vehicle': return vehicleStr(l) || null;
-        case 'vendor': return vendorName(l.vendor_id);
-        case 'lead_status': return l.lead_status;
-      }
-    };
-    arr.sort((a, b) => {
-      const av = getVal(a); const bv = getVal(b);
-      if (av == null && bv == null) return 0;
-      if (av == null) return 1;
-      if (bv == null) return -1;
-      if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
-      return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
-    });
-    return arr;
-  }, [filtered, sortKey, sortDir, vendors]);
-
+  const vendorName = (id: string | null) =>
+    id ? vendors.find(v => v.id === id)?.name ?? '—' : '—';
 
   const openNew = () => { setEditing(null); setForm({ ...emptyForm }); setOpen(true); };
 
@@ -214,44 +197,35 @@ export default function LeadsPage() {
   const save = async () => {
     if (!activeOrgId) return;
     const fullName = form.customer_full_name.trim();
-    if (!fullName && !form.customer_email && !form.customer_phone) {
+    if (!fullName && !form.customer_email && !form.customer_phone)
       return toast.error('Provide at least name, email, or phone');
-    }
     const { first, last } = splitName(fullName);
     const normEmail = normalizeEmail(form.customer_email);
     const normPhone = normalizePhone(form.customer_phone);
     const veh = parseVehicle(form.vehicle_of_interest);
     const hash = await buildDedupHash({
-      email: normEmail,
-      phone: normPhone,
+      email: normEmail, phone: normPhone,
       name: normalizeName(fullName),
       vehicle: normalizeName(form.vehicle_of_interest),
-      vin: null,
-      stock_number: form.stock_number.trim() || null,
+      vin: null, stock_number: form.stock_number.trim() || null,
     });
-
     const payload = {
       organization_id: activeOrgId,
       vendor_id: form.vendor_id === 'none' ? null : form.vendor_id,
-      customer_first_name: first,
-      customer_last_name: last,
+      customer_first_name: first, customer_last_name: last,
       customer_full_name: fullName || null,
       customer_email: form.customer_email.trim() || null,
       customer_phone: form.customer_phone.trim() || null,
-      normalized_email: normEmail,
-      normalized_phone: normPhone,
+      normalized_email: normEmail, normalized_phone: normPhone,
       dedup_hash: hash,
       vehicle_of_interest: form.vehicle_of_interest.trim() || null,
-      vehicle_year: veh.year,
-      vehicle_make: veh.make,
-      vehicle_model: veh.model,
+      vehicle_year: veh.year, vehicle_make: veh.make, vehicle_model: veh.model,
       lead_date: form.lead_date ? new Date(form.lead_date).toISOString() : new Date().toISOString(),
       lead_status: form.lead_status,
       notes: form.notes.trim() || null,
       stock_number: form.stock_number.trim() || null,
       manual_override: true,
     };
-
     const { error } = editing
       ? await supabase.from('leads').update(payload).eq('id', editing.id)
       : await supabase.from('leads').insert(payload);
@@ -274,17 +248,12 @@ export default function LeadsPage() {
     setLeads(prev => prev.map(l => l.id === id ? { ...l, vendor_id: v, manual_override: true } : l));
   };
 
-
   const toggleOne = (id: string, checked: boolean) => {
-    setSelected(prev => {
-      const next = new Set(prev);
-      if (checked) next.add(id); else next.delete(id);
-      return next;
-    });
+    setSelected(prev => { const n = new Set(prev); if (checked) n.add(id); else n.delete(id); return n; });
   };
 
   const toggleAll = (checked: boolean) => {
-    setSelected(checked ? new Set(filtered.map(l => l.id)) : new Set());
+    setSelected(checked ? new Set(leads.map(l => l.id)) : new Set());
   };
 
   const deleteSelected = async () => {
@@ -295,8 +264,8 @@ export default function LeadsPage() {
     setDeleting(false);
     if (error) return toast.error(error.message);
     toast.success(`Deleted ${ids.length} lead${ids.length === 1 ? '' : 's'}`);
-    setLeads(prev => prev.filter(l => !selected.has(l.id)));
     setSelected(new Set());
+    load();
   };
 
   const deleteByDate = async () => {
@@ -304,20 +273,13 @@ export default function LeadsPage() {
     setDeletingByDate(true);
     const fromIso = new Date(`${deleteFrom}T00:00:00`).toISOString();
     const toIso = new Date(`${deleteTo}T23:59:59.999`).toISOString();
-    const { data, error } = await supabase
-      .from('leads')
-      .delete()
+    const { data, error } = await supabase.from('leads').delete()
       .eq('organization_id', activeOrgId)
-      .gte('created_at', fromIso)
-      .lte('created_at', toIso)
-      .select('id');
+      .gte('created_at', fromIso).lte('created_at', toIso).select('id');
     setDeletingByDate(false);
     if (error) return toast.error(error.message);
-    const count = data?.length ?? 0;
-    toast.success(`Deleted ${count} lead${count === 1 ? '' : 's'}`);
-    setDateDeleteOpen(false);
-    setDeleteFrom('');
-    setDeleteTo('');
+    toast.success(`Deleted ${data?.length ?? 0} lead${(data?.length ?? 0) === 1 ? '' : 's'}`);
+    setDateDeleteOpen(false); setDeleteFrom(''); setDeleteTo('');
     setSelected(new Set());
     load();
   };
@@ -326,14 +288,9 @@ export default function LeadsPage() {
     const { error } = await supabase.from('leads').delete().eq('id', id);
     if (error) return toast.error(error.message);
     toast.success('Lead deleted');
-    setLeads(prev => prev.filter(l => l.id !== id));
-    setSelected(prev => {
-      const n = new Set(prev);
-      n.delete(id);
-      return n;
-    });
+    setSelected(prev => { const n = new Set(prev); n.delete(id); return n; });
+    load();
   };
-
 
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership to view leads.</p>;
 
@@ -361,65 +318,50 @@ export default function LeadsPage() {
                 </AlertDialogHeader>
                 <AlertDialogFooter>
                   <AlertDialogCancel>Cancel</AlertDialogCancel>
-                  <AlertDialogAction onClick={deleteSelected} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                    Delete
-                  </AlertDialogAction>
+                  <AlertDialogAction onClick={deleteSelected} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
                 </AlertDialogFooter>
               </AlertDialogContent>
             </AlertDialog>
           )}
-	<Button variant="outline" asChild>
-  	    <Link to="/upload"><Upload className="mr-1 h-4 w-4" /> Upload leads</Link>
-	</Button>
+          <Button variant="outline" asChild>
+            <Link to="/upload"><Upload className="mr-1 h-4 w-4" /> Upload leads</Link>
+          </Button>
           <Button variant="outline" onClick={() => {
             const vMap = new Map(vendors.map(v => [v.id, v.name]));
             downloadCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, leads.map(l => ({
-              date: l.lead_date ?? '',
-              customer: l.customer_full_name ?? '',
+              uploaded: l.created_at ?? '',
+              lead_date: l.lead_date ?? '',
+              customer: customerName(l),
               email: l.customer_email ?? '',
               phone: l.customer_phone ?? '',
               vin: l.vin ?? '',
               stock_number: l.stock_number ?? '',
-              vehicle: l.vehicle_of_interest ?? '',
+              vehicle: vehicleStr(l),
+              source: l.source_label ?? '',
+              type_of_vehicle: l.type_of_vehicle ?? '',
+              type_of_leads: l.type_of_leads ?? '',
               status: l.lead_status,
               vendor: l.vendor_id ? vMap.get(l.vendor_id) ?? '' : '',
-              manual_override: l.manual_override ? 'yes' : 'no',
             })));
           }} disabled={leads.length === 0}>
-            <Download className="mr-1 h-4 w-4" /> Export
+            <Download className="mr-1 h-4 w-4" /> Export page
           </Button>
           <Dialog open={dateDeleteOpen} onOpenChange={setDateDeleteOpen}>
             <DialogTrigger asChild>
-              <Button variant="outline">
-                <Trash2 className="mr-1 h-4 w-4" /> Delete by date
-              </Button>
+              <Button variant="outline"><Trash2 className="mr-1 h-4 w-4" /> Delete by date</Button>
             </DialogTrigger>
             <DialogContent className="max-w-md">
               <DialogHeader>
                 <DialogTitle>Delete leads by upload date</DialogTitle>
-                <DialogDescription>
-                  Permanently removes all leads uploaded within the selected date range. This cannot be undone.
-                </DialogDescription>
+                <DialogDescription>Permanently removes all leads uploaded within the selected date range. This cannot be undone.</DialogDescription>
               </DialogHeader>
               <div className="grid grid-cols-2 gap-3 py-2">
-                <div className="grid gap-2">
-                  <Label>From</Label>
-                  <Input type="date" value={deleteFrom} onChange={e => setDeleteFrom(e.target.value)} />
-                </div>
-                <div className="grid gap-2">
-                  <Label>To</Label>
-                  <Input type="date" value={deleteTo} onChange={e => setDeleteTo(e.target.value)} />
-                </div>
+                <div className="grid gap-2"><Label>From</Label><Input type="date" value={deleteFrom} onChange={e => setDeleteFrom(e.target.value)} /></div>
+                <div className="grid gap-2"><Label>To</Label><Input type="date" value={deleteTo} onChange={e => setDeleteTo(e.target.value)} /></div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setDateDeleteOpen(false)} disabled={deletingByDate}>Cancel</Button>
-                <Button
-                  onClick={deleteByDate}
-                  disabled={!deleteFrom || !deleteTo || deletingByDate}
-                  className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-                >
-                  Delete leads
-                </Button>
+                <Button onClick={deleteByDate} disabled={!deleteFrom || !deleteTo || deletingByDate} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete leads</Button>
               </DialogFooter>
             </DialogContent>
           </Dialog>
@@ -428,52 +370,22 @@ export default function LeadsPage() {
               <Button onClick={openNew}><Plus className="mr-1 h-4 w-4" /> Add lead</Button>
             </DialogTrigger>
             <DialogContent className="max-w-lg">
-              <DialogHeader>
-                <DialogTitle>{editing ? 'Edit lead' : 'New lead'}</DialogTitle>
-              </DialogHeader>
+              <DialogHeader><DialogTitle>{editing ? 'Edit lead' : 'New lead'}</DialogTitle></DialogHeader>
               <div className="grid gap-3 py-2">
-                <div className="grid gap-2">
-                  <Label>Customer name</Label>
-                  <Input value={form.customer_full_name} onChange={e => setForm({ ...form, customer_full_name: e.target.value })} />
-                </div>
+                <div className="grid gap-2"><Label>Customer name</Label><Input value={form.customer_full_name} onChange={e => setForm({ ...form, customer_full_name: e.target.value })} /></div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2">
-                    <Label>Email</Label>
-                    <Input value={form.customer_email} onChange={e => setForm({ ...form, customer_email: e.target.value })} />
-                  </div>
-                  <div className="grid gap-2">
-                    <Label>Phone</Label>
-                    <Input value={form.customer_phone} onChange={e => setForm({ ...form, customer_phone: e.target.value })} />
-                  </div>
+                  <div className="grid gap-2"><Label>Email</Label><Input value={form.customer_email} onChange={e => setForm({ ...form, customer_email: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>Phone</Label><Input value={form.customer_phone} onChange={e => setForm({ ...form, customer_phone: e.target.value })} /></div>
                 </div>
-                <div className="grid gap-2">
-                  <Label>Vehicle of interest</Label>
-                  <Input
-                    placeholder="2024 Ford F-150"
-                    value={form.vehicle_of_interest}
-                    onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })}
-                  />
-                </div>
-                <div className="grid gap-2">
-                  <Label>Stock #</Label>
-                  <Input
-                    placeholder="e.g. STK12345"
-                    value={form.stock_number}
-                    onChange={e => setForm({ ...form, stock_number: e.target.value })}
-                  />
-                </div>
+                <div className="grid gap-2"><Label>Vehicle of interest</Label><Input placeholder="2024 Ford F-150" value={form.vehicle_of_interest} onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })} /></div>
+                <div className="grid gap-2"><Label>Stock #</Label><Input placeholder="e.g. STK12345" value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2">
-                    <Label>Lead date</Label>
-                    <Input type="date" value={form.lead_date} onChange={e => setForm({ ...form, lead_date: e.target.value })} />
-                  </div>
+                  <div className="grid gap-2"><Label>Lead date</Label><Input type="date" value={form.lead_date} onChange={e => setForm({ ...form, lead_date: e.target.value })} /></div>
                   <div className="grid gap-2">
                     <Label>Status</Label>
                     <Select value={form.lead_status} onValueChange={v => setForm({ ...form, lead_status: v })}>
                       <SelectTrigger><SelectValue /></SelectTrigger>
-                      <SelectContent>
-                        {STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                      </SelectContent>
+                      <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                     </Select>
                   </div>
                 </div>
@@ -482,15 +394,12 @@ export default function LeadsPage() {
                   <Select value={form.vendor_id} onValueChange={v => setForm({ ...form, vendor_id: v })}>
                     <SelectTrigger><SelectValue /></SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="none">— Unassigned —</SelectItem>
+                      <SelectItem value="none">-- Unassigned --</SelectItem>
                       {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                     </SelectContent>
                   </Select>
                 </div>
-                <div className="grid gap-2">
-                  <Label>Notes</Label>
-                  <Textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
-                </div>
+                <div className="grid gap-2"><Label>Notes</Label><Textarea rows={2} value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
               </div>
               <DialogFooter>
                 <Button variant="outline" onClick={() => setOpen(false)}>Cancel</Button>
@@ -501,34 +410,22 @@ export default function LeadsPage() {
         </div>
       </div>
 
-      <Card>
+      <Card className="overflow-x-hidden">
         <CardHeader>
           <div className="flex flex-wrap items-end justify-between gap-3">
             <div className="flex items-center gap-2">
               <CardTitle>All Leads</CardTitle>
               <span className="rounded-md border border-border bg-muted px-2 py-1 text-sm font-medium text-foreground">
-                {filtered.length.toLocaleString()} {filtered.length === 1 ? 'record' : 'records'}
+                {totalCount.toLocaleString()} {totalCount === 1 ? 'record' : 'records'}
               </span>
-              {filtered.length !== leads.length && (
-                <span className="text-sm text-muted-foreground">
-                  of {leads.length.toLocaleString()} total
-                </span>
+              {totalPages > 1 && (
+                <span className="text-sm text-muted-foreground">Page {page + 1} of {totalPages}</span>
               )}
             </div>
             <div className="flex flex-wrap gap-2">
-              <Input
-                placeholder="Search anything…"
-                className="w-56"
-                value={filter.search}
-                onChange={e => setFilter({ ...filter, search: e.target.value })}
-              />
-              <Input
-                placeholder="VIN contains…"
-                className="w-44"
-                value={filter.vin}
-                onChange={e => setFilter({ ...filter, vin: e.target.value })}
-              />
-              <Select value={filter.vendor} onValueChange={v => setFilter({ ...filter, vendor: v })}>
+              <Input placeholder="Search name, email, phone, vehicle, stock..." className="w-64" value={search} onChange={e => applySearch(e.target.value)} />
+              <Input placeholder="VIN contains..." className="w-44" value={vinSearch} onChange={e => applyVin(e.target.value)} />
+              <Select value={vendorFilter} onValueChange={applyVendor}>
                 <SelectTrigger className="w-44"><SelectValue placeholder="Vendor" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All vendors</SelectItem>
@@ -536,7 +433,7 @@ export default function LeadsPage() {
                   {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Select value={filter.status} onValueChange={v => setFilter({ ...filter, status: v })}>
+              <Select value={statusFilter} onValueChange={applyStatus}>
                 <SelectTrigger className="w-36"><SelectValue placeholder="Status" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All statuses</SelectItem>
@@ -549,116 +446,124 @@ export default function LeadsPage() {
         <CardContent>
           {loading ? (
             <p className="text-sm text-muted-foreground">Loading...</p>
-          ) : sorted.length === 0 ? (
+          ) : leads.length === 0 ? (
             <p className="py-8 text-center text-sm text-muted-foreground">No leads match.</p>
           ) : (
-            <div className="max-h-[calc(100vh-380px)] min-h-[300px] overflow-auto rounded-md border border-border pb-3">
-              <div className="min-w-[1400px]">
-              <Table>
-                <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
-                  <TableRow>
-                    <TableHead className="w-10">
-                      <Checkbox
-                        checked={sorted.length > 0 && sorted.every(l => selected.has(l.id))}
-                        onCheckedChange={(c) => toggleAll(!!c)}
-                        aria-label="Select all"
-                      />
-                    </TableHead>
-                    <TableHead className="whitespace-nowrap">Uploaded</TableHead>
-                    <TableHead className="whitespace-nowrap">Lead Date</TableHead>
-                    <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                    <SortHeader label="Email" k="customer_email" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                    <TableHead>Phone</TableHead>
-                    <SortHeader label="VIN" k="vin" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                    <TableHead>Stock #</TableHead>
-                    <SortHeader label="Vehicle" k="vehicle" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                    <TableHead>Source</TableHead>
-		    <TableHead>Type of vehicle</TableHead>
-		    <TableHead>Type of leads</TableHead>
-                    <SortHeader label="Vendor" k="vendor" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                    <SortHeader label="Status" k="lead_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                    <TableHead className="w-24 text-right">Actions</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {sorted.map(l => (
-                    <TableRow key={l.id} data-state={selected.has(l.id) ? 'selected' : undefined}>
-                      <TableCell>
-                        <Checkbox
-                          checked={selected.has(l.id)}
-                          onCheckedChange={(c) => toggleOne(l.id, !!c)}
-                          aria-label={`Select lead ${l.customer_full_name ?? ''}`}
-                        />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
-                        {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
-                      </TableCell>
-                      <TableCell className="font-medium">
-                        {customerName(l)}
-                        {l.manual_override && <Badge variant="outline" className="ml-2 text-[10px]">manual</Badge>}
-                      </TableCell>
-                      <TableCell className="text-xs">{l.customer_email ?? '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-xs">{l.customer_phone ?? '—'}</TableCell>
-                      <TableCell className="font-mono text-xs">{l.vin ?? '—'}</TableCell>
-                      <TableCell className="font-mono text-xs">{l.stock_number ?? '—'}</TableCell>
-                      <TableCell className="text-sm">{vehicleStr(l) || '—'}</TableCell>
-                      <TableCell className="text-xs text-muted-foreground">{l.source_label ?? '—'}</TableCell>
-		      <TableCell className="text-xs text-muted-foreground">{l.type_of_vehicle ?? '—'}</TableCell>
-		      <TableCell className="text-xs text-muted-foreground">{l.type_of_leads ?? '—'}</TableCell>
-                      <TableCell>
-                        <Select value={l.vendor_id ?? 'none'} onValueChange={v => updateVendor(l.id, v)}>
-                          <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="none">— Unassigned —</SelectItem>
-                            {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell>
-                        <Select value={l.lead_status} onValueChange={v => updateStatus(l.id, v)}>
-                          <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
-                          <SelectContent>
-                            {STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                          </SelectContent>
-                        </Select>
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="sm" onClick={() => openEdit(l)} aria-label="Edit lead">
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <AlertDialog>
-                            <AlertDialogTrigger asChild>
-                              <Button variant="ghost" size="sm" aria-label="Delete lead">
-                                <Trash2 className="h-4 w-4 text-destructive" />
+            <>
+              <div className="max-h-[calc(100vh-420px)] min-h-[300px] overflow-auto rounded-md border border-border">
+                  <Table className="min-w-[1400px]">
+                    <TableHeader className="sticky top-0 z-10 bg-background shadow-[inset_0_-1px_0_hsl(var(--border))]">
+                      <TableRow>
+                        <TableHead className="w-10">
+                          <Checkbox
+                            checked={leads.length > 0 && leads.every(l => selected.has(l.id))}
+                            onCheckedChange={(c) => toggleAll(!!c)}
+                            aria-label="Select all"
+                          />
+                        </TableHead>
+                        <SortHeader label="Uploaded" k="created_at" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                        <SortHeader label="Lead Date" k="lead_date" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                        <SortHeader label="Customer" k="customer_full_name" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                        <SortHeader label="Email" k="customer_email" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                        <TableHead>Phone</TableHead>
+                        <SortHeader label="VIN" k="vin" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                        <TableHead>Stock #</TableHead>
+                        <TableHead>Vehicle</TableHead>
+                        <TableHead>Source</TableHead>
+                        <TableHead>Type of vehicle</TableHead>
+                        <TableHead>Type of leads</TableHead>
+                        <TableHead>Vendor</TableHead>
+                        <SortHeader label="Status" k="lead_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                        <TableHead className="w-24 text-right">Actions</TableHead>
+                      </TableRow>
+                    </TableHeader>
+                    <TableBody>
+                      {leads.map(l => (
+                        <TableRow key={l.id} data-state={selected.has(l.id) ? 'selected' : undefined}>
+                          <TableCell>
+                            <Checkbox checked={selected.has(l.id)} onCheckedChange={(c) => toggleOne(l.id, !!c)} aria-label={`Select ${customerName(l)}`} />
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {l.created_at ? new Date(l.created_at).toLocaleDateString() : '—'}
+                          </TableCell>
+                          <TableCell className="whitespace-nowrap text-xs text-muted-foreground">
+                            {l.lead_date ? new Date(l.lead_date).toLocaleDateString() : '—'}
+                          </TableCell>
+                          <TableCell className="font-medium">
+                            {customerName(l)}
+                            {l.manual_override && <Badge variant="outline" className="ml-2 text-[10px]">manual</Badge>}
+                          </TableCell>
+                          <TableCell className="text-xs">{l.customer_email ?? '—'}</TableCell>
+                          <TableCell className="whitespace-nowrap text-xs">{l.customer_phone ?? '—'}</TableCell>
+                          <TableCell className="font-mono text-xs">{l.vin ?? '—'}</TableCell>
+                          <TableCell className="font-mono text-xs">{l.stock_number ?? '—'}</TableCell>
+                          <TableCell className="text-xs">{vehicleStr(l) || '—'}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{l.source_label ?? '—'}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{l.type_of_vehicle ?? '—'}</TableCell>
+                          <TableCell className="text-xs text-muted-foreground">{l.type_of_leads ?? '—'}</TableCell>
+                          <TableCell>
+                            <Select value={l.vendor_id ?? 'none'} onValueChange={v => updateVendor(l.id, v)}>
+                              <SelectTrigger className="h-8 w-40 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="none">-- Unassigned --</SelectItem>
+                                {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
+                              </SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell>
+                            <Select value={l.lead_status} onValueChange={v => updateStatus(l.id, v)}>
+                              <SelectTrigger className="h-8 w-32 text-xs"><SelectValue /></SelectTrigger>
+                              <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
+                            </Select>
+                          </TableCell>
+                          <TableCell className="text-right">
+                            <div className="flex justify-end gap-1">
+                              <Button variant="ghost" size="sm" onClick={() => openEdit(l)} aria-label="Edit lead">
+                                <Pencil className="h-4 w-4" />
                               </Button>
-                            </AlertDialogTrigger>
-                            <AlertDialogContent>
-                              <AlertDialogHeader>
-                                <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
-                                <AlertDialogDescription>
-                                  Permanently removes {l.customer_full_name ?? 'this lead'}. Any sales attributed to it will be unlinked.
-                                </AlertDialogDescription>
-                              </AlertDialogHeader>
-                              <AlertDialogFooter>
-                                <AlertDialogCancel>Cancel</AlertDialogCancel>
-                                <AlertDialogAction onClick={() => deleteOne(l.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
-                                  Delete
-                                </AlertDialogAction>
-                              </AlertDialogFooter>
-                            </AlertDialogContent>
-                          </AlertDialog>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
+                              <AlertDialog>
+                                <AlertDialogTrigger asChild>
+                                  <Button variant="ghost" size="sm" aria-label="Delete lead">
+                                    <Trash2 className="h-4 w-4 text-destructive" />
+                                  </Button>
+                                </AlertDialogTrigger>
+                                <AlertDialogContent>
+                                  <AlertDialogHeader>
+                                    <AlertDialogTitle>Delete this lead?</AlertDialogTitle>
+                                    <AlertDialogDescription>Permanently removes {customerName(l)}. Any sales attributed to it will be unlinked.</AlertDialogDescription>
+                                  </AlertDialogHeader>
+                                  <AlertDialogFooter>
+                                    <AlertDialogCancel>Cancel</AlertDialogCancel>
+                                    <AlertDialogAction onClick={() => deleteOne(l.id)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90">Delete</AlertDialogAction>
+                                  </AlertDialogFooter>
+                                </AlertDialogContent>
+                              </AlertDialog>
+                            </div>
+                          </TableCell>
+                        </TableRow>
+                      ))}
+                    </TableBody>
+                  </Table>
               </div>
-            </div>
+
+              {/* Pagination */}
+              {totalPages > 1 && (
+                <div className="flex items-center justify-between pt-3">
+                  <p className="text-xs text-muted-foreground">
+                    Showing {(page * PAGE_SIZE + 1).toLocaleString()}–{Math.min((page + 1) * PAGE_SIZE, totalCount).toLocaleString()} of {totalCount.toLocaleString()} records
+                  </p>
+                  <div className="flex items-center gap-2">
+                    <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0 || loading}>
+                      <ChevronLeft className="h-4 w-4" /> Previous
+                    </Button>
+                    <span className="text-xs text-muted-foreground">Page {page + 1} of {totalPages}</span>
+                    <Button variant="outline" size="sm" onClick={() => setPage(p => Math.min(totalPages - 1, p + 1))} disabled={page >= totalPages - 1 || loading}>
+                      Next <ChevronRight className="h-4 w-4" />
+                    </Button>
+                  </div>
+                </div>
+              )}
+            </>
           )}
         </CardContent>
       </Card>
