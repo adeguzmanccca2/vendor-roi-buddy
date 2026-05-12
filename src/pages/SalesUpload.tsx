@@ -201,8 +201,8 @@ export default function SalesUploadPage() {
           // WHY: Fall back to salePrice if no gross columns exist in the CSV.
           // Many DMS exports only have 'Sale Price' with no separate gross fields.
           // This ensures revenue is always populated so attribution ROI works.
-          const gross = (normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back)) || salePrice || 0;
-          const total = (totalCol ?? ((front + back) || gross)) || salePrice || 0;
+          const gross = (normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back)) || (salePrice ?? 0);
+          const total = (totalCol ?? ((front + back) || gross)) || (salePrice ?? 0);
           const effectiveSalePrice = salePrice ?? total ?? gross ?? null;
 
           // Dedup: prefer DMS deal id / stock# / VIN, else identity + date
