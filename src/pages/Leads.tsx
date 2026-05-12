@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload, ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -91,7 +91,13 @@ export default function LeadsPage() {
   const [search, setSearch] = useState('');
   const [vinSearch, setVinSearch] = useState('');
   const [vendorFilter, setVendorFilter] = useState('all');
-  const [statusFilter, setStatusFilter] = useState('all');
+
+  // WHY: Replaced statusFilter with two lead_date range states.
+  // This lets users filter leads by when the lead actually occurred (lead_date),
+  // which is far more useful than filtering by status for ROI/attribution analysis.
+  const [leadDateFrom, setLeadDateFrom] = useState('');
+  const [leadDateTo, setLeadDateTo] = useState('');
+
   const [sortKey, setSortKey] = useState<SortKey>('created_at');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
 
@@ -124,7 +130,17 @@ export default function LeadsPage() {
       q = q.eq('organization_id', activeOrgId);
       if (vendorFilter === 'unassigned') q = q.is('vendor_id', null);
       else if (vendorFilter !== 'all') q = q.eq('vendor_id', vendorFilter);
-      if (statusFilter !== 'all') q = q.eq('lead_status', statusFilter);
+
+      // WHY: Filter by lead_date range instead of status. We convert the local
+      // date strings to ISO so Supabase can compare against the timestamptz column.
+      // We use gte (start of from-day) and lte (end of to-day) for inclusive range.
+      if (leadDateFrom) {
+        q = q.gte('lead_date', new Date(`${leadDateFrom}T00:00:00`).toISOString());
+      }
+      if (leadDateTo) {
+        q = q.lte('lead_date', new Date(`${leadDateTo}T23:59:59.999`).toISOString());
+      }
+
       if (vinSearch.trim()) q = q.ilike('vin', `%${vinSearch.trim()}%`);
       if (search.trim()) {
         const s = search.trim();
@@ -148,7 +164,8 @@ export default function LeadsPage() {
     setTotalCount(countResult.count ?? 0);
     setLeads((dataResult.data ?? []) as Lead[]);
     setLoading(false);
-  }, [activeOrgId, page, search, vinSearch, vendorFilter, statusFilter, sortKey, sortDir]);
+  // WHY: leadDateFrom/leadDateTo replace statusFilter in the dependency array
+  }, [activeOrgId, page, search, vinSearch, vendorFilter, leadDateFrom, leadDateTo, sortKey, sortDir]);
 
   useEffect(() => {
     if (!activeOrgId) return;
@@ -161,7 +178,9 @@ export default function LeadsPage() {
   const applySearch = (val: string) => { setSearch(val); setPage(0); };
   const applyVin = (val: string) => { setVinSearch(val); setPage(0); };
   const applyVendor = (val: string) => { setVendorFilter(val); setPage(0); };
-  const applyStatus = (val: string) => { setStatusFilter(val); setPage(0); };
+  const applyLeadDateFrom = (val: string) => { setLeadDateFrom(val); setPage(0); };
+  const applyLeadDateTo = (val: string) => { setLeadDateTo(val); setPage(0); };
+  const clearDateRange = () => { setLeadDateFrom(''); setLeadDateTo(''); setPage(0); };
 
   const totalPages = Math.ceil(totalCount / PAGE_SIZE);
 
@@ -433,13 +452,38 @@ export default function LeadsPage() {
                   {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                 </SelectContent>
               </Select>
-              <Select value={statusFilter} onValueChange={applyStatus}>
-                <SelectTrigger className="w-36"><SelectValue placeholder="Status" /></SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All statuses</SelectItem>
-                  {STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}
-                </SelectContent>
-              </Select>
+
+              {/* WHY: Lead date range filter — replaces the status dropdown.
+                  Two date inputs (From / To) filter by lead_date server-side.
+                  The X button clears both dates at once for a quick reset. */}
+              <div className="flex items-center gap-1">
+                <Input
+                  type="date"
+                  className="w-36 text-xs"
+                  title="Lead date from"
+                  value={leadDateFrom}
+                  onChange={e => applyLeadDateFrom(e.target.value)}
+                />
+                <span className="text-xs text-muted-foreground">–</span>
+                <Input
+                  type="date"
+                  className="w-36 text-xs"
+                  title="Lead date to"
+                  value={leadDateTo}
+                  onChange={e => applyLeadDateTo(e.target.value)}
+                />
+                {(leadDateFrom || leadDateTo) && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="h-8 w-8 p-0"
+                    onClick={clearDateRange}
+                    title="Clear date filter"
+                  >
+                    <X className="h-3 w-3" />
+                  </Button>
+                )}
+              </div>
             </div>
           </div>
         </CardHeader>

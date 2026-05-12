@@ -50,6 +50,9 @@ interface Sale {
   vendor_id: string | null;
   lead_id: string | null;
   notes: string | null;
+  // match_method persists HOW the sale was matched (VIN, Stock#, Phone+Name, etc.)
+  // so it survives page refreshes without re-running Match Leads.
+  match_method: string | null;
 }
 
 interface VendorOption { id: string; name: string }
@@ -76,32 +79,46 @@ const emptyForm = {
   notes: '',
 };
 
+// ---------------------------------------------------------------------------
+// WHY: Name matching helpers
+//
+// extractLastName: takes the last word of a name string as a normalized last
+// name token. We use last name only (not full name) because:
+//   • Sales records often have "JOHN SMITH" while leads have "John Smith"
+//   • First names vary most (Bob/Robert, Bill/William, Liz/Elizabeth)
+//   • Last name alone is a strong enough secondary check alongside phone/email
+// We lowercase and strip non-alpha so punctuation/spacing never blocks a match.
+//
+// namesMatch: returns true if either name's last name token appears inside the
+// other string. Contains-check (not equality) handles suffixes like
+// "Smith Jr" vs "Smith". Minimum 2 chars avoids single-letter false positives.
+// ---------------------------------------------------------------------------
+function extractLastName(fullName: string | null): string {
+  if (!fullName) return '';
+  const parts = fullName.trim().toLowerCase().replace(/[^a-z\s]/g, '').trim().split(/\s+/);
+  return parts[parts.length - 1] ?? '';
+}
+
+function namesMatch(nameA: string | null, nameB: string | null): boolean {
+  const a = extractLastName(nameA);
+  const b = extractLastName(nameB);
+  if (a.length < 2 || b.length < 2) return false;
+  return a.includes(b) || b.includes(a);
+}
+
 function SortHeader({
-  label,
-  k,
-  sortKey,
-  sortDir,
-  onClick,
-  align = 'left',
+  label, k, sortKey, sortDir, onClick, align = 'left',
 }: {
-  label: string;
-  k: keyof Sale;
-  sortKey: keyof Sale;
-  sortDir: 'asc' | 'desc';
-  onClick: (k: keyof Sale) => void;
-  align?: 'left' | 'right';
+  label: string; k: keyof Sale; sortKey: keyof Sale; sortDir: 'asc' | 'desc';
+  onClick: (k: keyof Sale) => void; align?: 'left' | 'right';
 }) {
   const active = sortKey === k;
   const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
   return (
     <TableHead className={align === 'right' ? 'text-right' : ''}>
-      <button
-        type="button"
-        onClick={() => onClick(k)}
-        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'} ${align === 'right' ? 'ml-auto' : ''}`}
-      >
-        {label}
-        <Icon className="h-3 w-3" />
+      <button type="button" onClick={() => onClick(k)}
+        className={`inline-flex items-center gap-1 hover:text-foreground ${active ? 'text-foreground' : 'text-muted-foreground'} ${align === 'right' ? 'ml-auto' : ''}`}>
+        {label}<Icon className="h-3 w-3" />
       </button>
     </TableHead>
   );
@@ -128,10 +145,6 @@ export default function SalesPage() {
   const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult>>(new Map());
   const [matching, setMatching] = useState(false);
 
-  // ── Date-range delete state ──────────────────────────────────────────────
-  // Why: we keep this separate from the normal confirmDelete flow because it
-  // needs its own date inputs, a preview count, and a Supabase query by date
-  // range rather than by a list of IDs.
   const [dateDeleteOpen, setDateDeleteOpen] = useState(false);
   const [deleteRangeFrom, setDeleteRangeFrom] = useState('');
   const [deleteRangeTo, setDeleteRangeTo] = useState('');
@@ -145,14 +158,9 @@ export default function SalesPage() {
     return m;
   }, [vendorList]);
 
-  // Build lead matches from already-saved attribution data when sales and vendors load.
-  // Why: saves already have vendor_id and attribution_status stored from previous Match Leads runs,
-  // so we can show the match column instantly without any extra API calls.
-  // WHY: We removed the vendorList.length === 0 guard that caused the race condition.
-  // Previously, if sales loaded before vendors, this effect bailed out early and never
-  // re-ran correctly. Now we only guard on sales.length — vendorMap is already a useMemo
-  // that re-computes when vendorList changes, so this effect naturally re-runs when
-  // vendors arrive and vendorMap updates, populating leadMatches correctly every time.
+  // WHY: On load, read match_method from DB so the badge shows "via Phone+Name"
+  // etc. immediately — no need to re-run Match Leads. Older records without
+  // match_method fall back gracefully to displaying 'Auto'.
   useEffect(() => {
     if (sales.length === 0) return;
     const result = new Map<string, MatchResult>();
@@ -160,7 +168,9 @@ export default function SalesPage() {
       if (sale.vendor_id && (sale.attribution_status === 'auto' || sale.attribution_status === 'manual')) {
         result.set(sale.id, {
           customerName: sale.customer_full_name ?? 'Unknown',
-          matchMethod: sale.attribution_status === 'manual' ? 'Manual' : 'Auto',
+          matchMethod: sale.attribution_status === 'manual'
+            ? 'Manual'
+            : (sale.match_method ?? 'Auto'),
           vendorName: vendorMap.get(sale.vendor_id) ?? null,
         });
       }
@@ -170,10 +180,7 @@ export default function SalesPage() {
 
   const toggleSort = (key: keyof Sale) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
-    else {
-      setSortKey(key);
-      setSortDir('asc');
-    }
+    else { setSortKey(key); setSortDir('asc'); }
   };
 
   useEffect(() => {
@@ -186,10 +193,7 @@ export default function SalesPage() {
   async function loadVendors() {
     if (!activeOrgId) return;
     const { data, error } = await supabase
-      .from('vendors')
-      .select('id, name')
-      .eq('organization_id', activeOrgId)
-      .order('name');
+      .from('vendors').select('id, name').eq('organization_id', activeOrgId).order('name');
     if (!error) setVendorList((data ?? []) as VendorOption[]);
   }
 
@@ -199,7 +203,7 @@ export default function SalesPage() {
     const { data, error } = await supabase
       .from('sales')
       .select(
-        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, vendor_id, lead_id, notes',
+        'id, customer_full_name, customer_email, customer_phone, vin, vehicle_year, vehicle_make, vehicle_model, vehicle_of_interest, stock_number, sale_date, sale_price, front_gross, back_gross, total_gross, gross_revenue, salesperson, source_label, attribution_status, vendor_id, lead_id, notes, match_method',
       )
       .eq('organization_id', activeOrgId)
       .order('sale_date', { ascending: false, nullsFirst: false })
@@ -221,9 +225,8 @@ export default function SalesPage() {
     const to = dateTo ? new Date(dateTo).getTime() + 24 * 60 * 60 * 1000 - 1 : null;
     return sales.filter(sale => {
       if (vendorFilter !== '__all__') {
-        if (vendorFilter === '__none__') {
-          if (sale.vendor_id) return false;
-        } else if (sale.vendor_id !== vendorFilter) return false;
+        if (vendorFilter === '__none__') { if (sale.vendor_id) return false; }
+        else if (sale.vendor_id !== vendorFilter) return false;
       }
       if (v && !(sale.vin ?? '').toLowerCase().includes(v)) return false;
       if (n && !(sale.customer_full_name ?? '').toLowerCase().includes(n)) return false;
@@ -235,20 +238,10 @@ export default function SalesPage() {
       }
       if (s) {
         const hay = [
-          sale.customer_full_name,
-          sale.customer_email,
-          sale.customer_phone,
-          sale.vin,
-          sale.stock_number,
-          sale.salesperson,
-          sale.source_label,
-          sale.vehicle_make,
-          sale.vehicle_model,
-          sale.vehicle_of_interest,
-        ]
-          .filter(Boolean)
-          .join(' ')
-          .toLowerCase();
+          sale.customer_full_name, sale.customer_email, sale.customer_phone,
+          sale.vin, sale.stock_number, sale.salesperson, sale.source_label,
+          sale.vehicle_make, sale.vehicle_model, sale.vehicle_of_interest,
+        ].filter(Boolean).join(' ').toLowerCase();
         if (!hay.includes(s)) return false;
       }
       return true;
@@ -259,14 +252,12 @@ export default function SalesPage() {
     const arr = [...filtered];
     const dir = sortDir === 'asc' ? 1 : -1;
     arr.sort((a, b) => {
-      const av = a[sortKey];
-      const bv = b[sortKey];
+      const av = a[sortKey]; const bv = b[sortKey];
       if (av == null && bv == null) return 0;
       if (av == null) return 1;
       if (bv == null) return -1;
-      if (sortKey === 'sale_date') {
+      if (sortKey === 'sale_date')
         return (new Date(av as string).getTime() - new Date(bv as string).getTime()) * dir;
-      }
       if (typeof av === 'number' && typeof bv === 'number') return (av - bv) * dir;
       return String(av).localeCompare(String(bv), undefined, { numeric: true, sensitivity: 'base' }) * dir;
     });
@@ -284,18 +275,13 @@ export default function SalesPage() {
 
   const toggleOne = (id: string) => {
     const next = new Set(selected);
-    if (next.has(id)) next.delete(id);
-    else next.add(id);
+    if (next.has(id)) next.delete(id); else next.add(id);
     setSelected(next);
   };
 
   const clearFilters = () => {
-    setSearch('');
-    setVinFilter('');
-    setNameFilter('');
-    setDateFrom('');
-    setDateTo('');
-    setVendorFilter('__all__');
+    setSearch(''); setVinFilter(''); setNameFilter('');
+    setDateFrom(''); setDateTo(''); setVendorFilter('__all__');
   };
 
   const openEdit = (sale: Sale) => {
@@ -350,10 +336,7 @@ export default function SalesPage() {
       payload.attribution_confidence = 100;
     }
     const { error } = await supabase.from('sales').update(payload).eq('id', editing.id);
-    if (error) {
-      toast.error('Update failed', { description: error.message });
-      return;
-    }
+    if (error) { toast.error('Update failed', { description: error.message }); return; }
     toast.success('Sale updated');
     setEditing(null);
     void load();
@@ -362,65 +345,63 @@ export default function SalesPage() {
   const doDelete = async () => {
     if (!confirmDelete) return;
     const { error } = await supabase.from('sales').delete().in('id', confirmDelete.ids);
-    if (error) {
-      toast.error('Delete failed', { description: error.message });
-    } else {
-      toast.success(`Deleted ${confirmDelete.ids.length} sale(s)`);
-    }
+    if (error) { toast.error('Delete failed', { description: error.message }); }
+    else { toast.success(`Deleted ${confirmDelete.ids.length} sale(s)`); }
     setConfirmDelete(null);
     void load();
   };
 
-  // ── Date-range delete helpers ────────────────────────────────────────────
-
-  // Why: before showing the final confirmation we run a COUNT query so the
-  // user sees exactly how many records will be removed — no surprises.
   const previewDateRangeCount = async () => {
     if (!activeOrgId || !deleteRangeFrom || !deleteRangeTo) return;
     const fromIso = new Date(deleteRangeFrom).toISOString();
-    // Add 1 day - 1ms so "to" date is inclusive of the full day.
     const toIso = new Date(new Date(deleteRangeTo).getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
-    const { count, error } = await supabase
-      .from('sales')
+    const { count, error } = await supabase.from('sales')
       .select('id', { count: 'exact', head: true })
       .eq('organization_id', activeOrgId)
-      .gte('sale_date', fromIso)
-      .lte('sale_date', toIso);
-    if (error) {
-      toast.error('Could not count records', { description: error.message });
-      return;
-    }
+      .gte('sale_date', fromIso).lte('sale_date', toIso);
+    if (error) { toast.error('Could not count records', { description: error.message }); return; }
     setDeleteRangeCount(count ?? 0);
     setDateDeleteOpen(false);
     setDateDeleteConfirmOpen(true);
   };
 
-  // Why: we do the actual Supabase delete here using gte/lte on sale_date,
-  // scoped to the org so we never touch another org's data.
   const doDateRangeDelete = async () => {
     if (!activeOrgId || !deleteRangeFrom || !deleteRangeTo) return;
     setDeletingByDate(true);
     const fromIso = new Date(deleteRangeFrom).toISOString();
     const toIso = new Date(new Date(deleteRangeTo).getTime() + 24 * 60 * 60 * 1000 - 1).toISOString();
-    const { error } = await supabase
-      .from('sales')
-      .delete()
+    const { error } = await supabase.from('sales').delete()
       .eq('organization_id', activeOrgId)
-      .gte('sale_date', fromIso)
-      .lte('sale_date', toIso);
+      .gte('sale_date', fromIso).lte('sale_date', toIso);
     setDeletingByDate(false);
-    if (error) {
-      toast.error('Delete failed', { description: error.message });
-    } else {
+    if (error) { toast.error('Delete failed', { description: error.message }); }
+    else {
       toast.success(`Deleted ${deleteRangeCount ?? 'matching'} sale(s) between ${deleteRangeFrom} and ${deleteRangeTo}`);
       setDateDeleteConfirmOpen(false);
-      setDeleteRangeFrom('');
-      setDeleteRangeTo('');
-      setDeleteRangeCount(null);
+      setDeleteRangeFrom(''); setDeleteRangeTo(''); setDeleteRangeCount(null);
       void load();
     }
   };
 
+  // ---------------------------------------------------------------------------
+  // matchLeads — confidence waterfall (highest → lowest):
+  //
+  //  1. VIN          100%  unique vehicle ID, most reliable
+  //  2. Stock#        95%  dealership stock number, very reliable
+  //  3. Phone+Name    90%  phone + last-name match eliminates shared-phone risk
+  //  4. Email+Name    90%  email + last-name match, same logic
+  //  5. Email+Phone   88%  two independent contact fields agree (no name needed)
+  //  6. Phone alone   75%  single-field fallback, only when exactly 1 lead matches
+  //  7. Email alone   75%  single-field fallback, only when exactly 1 lead matches
+  //
+  // WHY Phone/Email maps hold arrays: unlike VIN/Stock# (unique per vehicle),
+  // a phone or email can appear on multiple leads. Arrays let combo checks
+  // scan all candidates for name or second-field agreement.
+  //
+  // WHY "exactly 1" guard on solo Phone/Email fallback: if multiple leads share
+  // the same phone or email we cannot confidently pick one, so we skip rather
+  // than risk a wrong attribution.
+  // ---------------------------------------------------------------------------
   const matchLeads = async () => {
     if (!activeOrgId) return;
     setMatching(true);
@@ -430,17 +411,25 @@ export default function SalesPage() {
       .select('id, customer_full_name, customer_email, customer_phone, normalized_phone, normalized_email, vendor_id, vin, stock_number')
       .eq('organization_id', activeOrgId);
 
-    type LeadEntry = { leadId: string; name: string; vendorId: string | null };
-    const vinMap = new Map<string, LeadEntry>();
+    type LeadEntry = {
+      leadId: string; name: string; vendorId: string | null;
+      normPhone: string; normEmail: string;
+    };
+
+    const vinMap   = new Map<string, LeadEntry>();
     const stockMap = new Map<string, LeadEntry>();
-    const phoneMap = new Map<string, LeadEntry>();
-    const emailMap = new Map<string, LeadEntry>();
+    const phoneMap = new Map<string, LeadEntry[]>();
+    const emailMap = new Map<string, LeadEntry[]>();
 
     for (const lead of leadsData ?? []) {
+      const normPhone = lead.normalized_phone || normalizePhone(lead.customer_phone);
+      const normEmail = lead.normalized_email || normalizeEmail(lead.customer_email);
       const entry: LeadEntry = {
         leadId: lead.id,
-        name: lead.customer_full_name ?? 'Unknown',
+        name: lead.customer_full_name ?? '',
         vendorId: lead.vendor_id ?? null,
+        normPhone,
+        normEmail,
       };
       if (lead.vin) {
         const key = lead.vin.trim().toUpperCase();
@@ -450,14 +439,25 @@ export default function SalesPage() {
         const key = lead.stock_number.trim().toUpperCase();
         if (key && !stockMap.has(key)) stockMap.set(key, entry);
       }
-      const p = lead.normalized_phone || normalizePhone(lead.customer_phone);
-      if (p && !phoneMap.has(p)) phoneMap.set(p, entry);
-      const e = lead.normalized_email || normalizeEmail(lead.customer_email);
-      if (e && !emailMap.has(e)) emailMap.set(e, entry);
+      if (normPhone) {
+        if (!phoneMap.has(normPhone)) phoneMap.set(normPhone, []);
+        phoneMap.get(normPhone)!.push(entry);
+      }
+      if (normEmail) {
+        if (!emailMap.has(normEmail)) emailMap.set(normEmail, []);
+        emailMap.get(normEmail)!.push(entry);
+      }
     }
 
+    // Find first candidate whose last name matches the sale's customer name
+    const findByName = (candidates: LeadEntry[], saleName: string | null): LeadEntry | null =>
+      candidates.find(c => namesMatch(c.name, saleName)) ?? null;
+
     const result = new Map<string, MatchResult>();
-    type SaleUpdate = { id: string; vendor_id: string | null; lead_id: string; confidence: number; assignVendor: boolean };
+    type SaleUpdate = {
+      id: string; vendor_id: string | null; lead_id: string;
+      confidence: number; assignVendor: boolean; method: string;
+    };
     const updates: SaleUpdate[] = [];
 
     for (const sale of sales) {
@@ -467,43 +467,73 @@ export default function SalesPage() {
       let method = '';
       let confidence = 0;
 
-      if (sale.vin) {
-        const key = sale.vin.trim().toUpperCase();
-        const hit = key ? vinMap.get(key) : undefined;
+      const saleVin   = sale.vin?.trim().toUpperCase() ?? '';
+      const saleStock = sale.stock_number?.trim().toUpperCase() ?? '';
+      const salePhone = normalizePhone(sale.customer_phone);
+      const saleEmail = normalizeEmail(sale.customer_email);
+
+      // 1. VIN
+      if (saleVin) {
+        const hit = vinMap.get(saleVin);
         if (hit) { matched = hit; method = 'VIN'; confidence = 100; }
       }
-      if (!matched && sale.stock_number) {
-        const key = sale.stock_number.trim().toUpperCase();
-        const hit = key ? stockMap.get(key) : undefined;
+
+      // 2. Stock#
+      if (!matched && saleStock) {
+        const hit = stockMap.get(saleStock);
         if (hit) { matched = hit; method = 'Stock#'; confidence = 95; }
       }
-      if (!matched) {
-        const p = normalizePhone(sale.customer_phone);
-        const hit = p ? phoneMap.get(p) : undefined;
-        if (hit) { matched = hit; method = 'Phone'; confidence = 80; }
+
+      // 3. Phone + Name
+      if (!matched && salePhone) {
+        const candidates = phoneMap.get(salePhone) ?? [];
+        const hit = findByName(candidates, sale.customer_full_name);
+        if (hit) { matched = hit; method = 'Phone+Name'; confidence = 90; }
       }
-      if (!matched) {
-        const e = normalizeEmail(sale.customer_email);
-        const hit = e ? emailMap.get(e) : undefined;
-        if (hit) { matched = hit; method = 'Email'; confidence = 80; }
+
+      // 4. Email + Name
+      if (!matched && saleEmail) {
+        const candidates = emailMap.get(saleEmail) ?? [];
+        const hit = findByName(candidates, sale.customer_full_name);
+        if (hit) { matched = hit; method = 'Email+Name'; confidence = 90; }
+      }
+
+      // 5. Email + Phone (same lead has both, no name needed)
+      if (!matched && salePhone && saleEmail) {
+        const candidates = phoneMap.get(salePhone) ?? [];
+        const hit = candidates.find(c => c.normEmail === saleEmail) ?? null;
+        if (hit) { matched = hit; method = 'Email+Phone'; confidence = 88; }
+      }
+
+      // 6. Phone alone — only if exactly 1 lead has this phone
+      if (!matched && salePhone) {
+        const candidates = phoneMap.get(salePhone) ?? [];
+        if (candidates.length === 1) {
+          matched = candidates[0]; method = 'Phone'; confidence = 75;
+        }
+      }
+
+      // 7. Email alone — only if exactly 1 lead has this email
+      if (!matched && saleEmail) {
+        const candidates = emailMap.get(saleEmail) ?? [];
+        if (candidates.length === 1) {
+          matched = candidates[0]; method = 'Email'; confidence = 75;
+        }
       }
 
       if (matched) {
         result.set(sale.id, {
-          customerName: matched.name,
+          customerName: matched.name || (sale.customer_full_name ?? 'Unknown'),
           matchMethod: method,
           vendorName: matched.vendorId ? vendorMap.get(matched.vendorId) ?? null : null,
         });
-        // WHY: We always push an update when a match is found so lead_id is
-        // saved to the DB. Vendor assignment only happens if the matched lead
-        // has a vendor AND the sale doesn't already have one (protects manual
-        // assignments). But lead_id should always be saved regardless.
         updates.push({
           id: sale.id,
           lead_id: matched.leadId,
           vendor_id: matched.vendorId && !sale.vendor_id ? matched.vendorId : (sale.vendor_id ?? null),
           confidence,
           assignVendor: !!(matched.vendorId && !sale.vendor_id),
+          method,
         });
       }
     }
@@ -517,11 +547,9 @@ export default function SalesPage() {
             lead_id: u.lead_id,
             attribution_status: 'auto',
             attribution_confidence: u.confidence,
+            match_method: u.method,
           };
-          // Only overwrite vendor if the sale didn't already have one
-          if (u.assignVendor) {
-            payload.vendor_id = u.vendor_id;
-          }
+          if (u.assignVendor) payload.vendor_id = u.vendor_id;
           return supabase.from('sales').update(payload).eq('id', u.id);
         }),
       );
@@ -530,10 +558,11 @@ export default function SalesPage() {
 
     setMatching(false);
     const matchCount = result.size;
-    const msg = updates.length > 0
-      ? `Matched ${matchCount} of ${sales.length} sales · vendor assigned to ${updates.length}`
-      : `Matched ${matchCount} of ${sales.length} sales to leads`;
-    toast.success(msg);
+    toast.success(
+      updates.length > 0
+        ? `Matched ${matchCount} of ${sales.length} sales · vendor assigned to ${updates.length}`
+        : `Matched ${matchCount} of ${sales.length} sales to leads`
+    );
   };
 
   const exportCsv = () => {
@@ -553,22 +582,19 @@ export default function SalesPage() {
       source_label: s.source_label ?? '',
       vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
       attribution_status: s.attribution_status,
+      match_method: s.match_method ?? '',
     }));
     downloadCsv(`sales-${activeOrg?.name ?? 'export'}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
 
   const fmtCurrency = (n: number | null) =>
     n == null ? '' : n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
-
   const fmtDate = (d: string | null) => (d ? new Date(d).toLocaleDateString() : '');
-
   const vehicleStr = (s: Sale) =>
     [s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || s.vehicle_of_interest || '';
 
   if (!activeOrgId) {
-    return (
-      <div className="text-sm text-muted-foreground">Select a dealership to view sales.</div>
-    );
+    return <div className="text-sm text-muted-foreground">Select a dealership to view sales.</div>;
   }
 
   const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo) || vendorFilter !== '__all__';
@@ -593,18 +619,10 @@ export default function SalesPage() {
           <Button variant="outline" size="sm" onClick={exportCsv} disabled={filtered.length === 0}>
             <Download className="mr-2 h-4 w-4" /> Export CSV
           </Button>
-          {/* Why: date-range delete is in the toolbar so admins can quickly
-              wipe a bad import batch without touching individual rows. */}
           <Button
-            variant="outline"
-            size="sm"
+            variant="outline" size="sm"
             className="text-destructive border-destructive/40 hover:bg-destructive/10"
-            onClick={() => {
-              setDeleteRangeFrom('');
-              setDeleteRangeTo('');
-              setDeleteRangeCount(null);
-              setDateDeleteOpen(true);
-            }}
+            onClick={() => { setDeleteRangeFrom(''); setDeleteRangeTo(''); setDeleteRangeCount(null); setDateDeleteOpen(true); }}
             disabled={sales.length === 0}
           >
             <CalendarX className="mr-2 h-4 w-4" /> Delete by date
@@ -612,7 +630,6 @@ export default function SalesPage() {
         </div>
       </div>
 
-      {/* Match rate summary — shows how many sales have been matched to a lead */}
       {sales.length > 0 && (
         <div className="flex items-center gap-3 text-sm">
           <span className="rounded-md border border-border bg-muted px-3 py-1.5 font-medium text-foreground">
@@ -623,9 +640,7 @@ export default function SalesPage() {
       )}
 
       <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base">Filters</CardTitle>
-        </CardHeader>
+        <CardHeader className="pb-3"><CardTitle className="text-base">Filters</CardTitle></CardHeader>
         <CardContent className="space-y-3">
           <div className="grid gap-3 md:grid-cols-3 lg:grid-cols-6">
             <div>
@@ -650,9 +665,7 @@ export default function SalesPage() {
                 <SelectContent>
                   <SelectItem value="__all__">All vendors</SelectItem>
                   <SelectItem value="__none__">Unassigned</SelectItem>
-                  {vendorList.map(v => (
-                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
-                  ))}
+                  {vendorList.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
@@ -723,68 +736,62 @@ export default function SalesPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow>
-                    <TableCell colSpan={13} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell>
-                  </TableRow>
+                  <TableRow><TableCell colSpan={13} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell></TableRow>
                 ) : sorted.length === 0 ? (
-                  <TableRow>
-                    <TableCell colSpan={13} className="text-center text-sm text-muted-foreground">
-                      {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
+                  <TableRow><TableCell colSpan={13} className="text-center text-sm text-muted-foreground">
+                    {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
+                  </TableCell></TableRow>
+                ) : sorted.map(sale => (
+                  <TableRow key={sale.id} data-state={selected.has(sale.id) ? 'selected' : undefined}>
+                    <TableCell>
+                      <Checkbox checked={selected.has(sale.id)} onCheckedChange={() => toggleOne(sale.id)} aria-label={`Select sale ${sale.id}`} />
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap">{fmtDate(sale.sale_date)}</TableCell>
+                    <TableCell>
+                      <div className="font-medium">{sale.customer_full_name ?? '—'}</div>
+                      <div className="text-xs text-muted-foreground">{sale.customer_email ?? sale.customer_phone ?? ''}</div>
+                    </TableCell>
+                    <TableCell className="font-mono text-xs">{sale.vin ?? '—'}</TableCell>
+                    <TableCell>{vehicleStr(sale) || '—'}</TableCell>
+                    <TableCell>{sale.stock_number ?? '—'}</TableCell>
+                    <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
+                    <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
+                    <TableCell>{sale.salesperson ?? '—'}</TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {sale.vendor_id
+                        ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
+                        : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell>
+                      <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
+                        {sale.attribution_status}
+                      </Badge>
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {(() => {
+                        const m = leadMatches.get(sale.id);
+                        if (!m) return <span className="text-muted-foreground">— No match</span>;
+                        return (
+                          <div className="space-y-0.5">
+                            <div className="font-medium text-green-600 truncate max-w-[140px]">{m.customerName}</div>
+                            <Badge variant="outline" className="text-[10px] px-1 py-0">via {m.matchMethod}</Badge>
+                            {m.vendorName && <div className="text-xs text-muted-foreground truncate max-w-[140px]">{m.vendorName}</div>}
+                          </div>
+                        );
+                      })()}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-1">
+                        <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(sale)}>
+                          <Pencil className="h-4 w-4" />
+                        </Button>
+                        <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setConfirmDelete({ ids: [sale.id], label: sale.customer_full_name ?? 'this sale' })}>
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
                     </TableCell>
                   </TableRow>
-                ) : (
-                  sorted.map(sale => (
-                    <TableRow key={sale.id} data-state={selected.has(sale.id) ? 'selected' : undefined}>
-                      <TableCell>
-                        <Checkbox checked={selected.has(sale.id)} onCheckedChange={() => toggleOne(sale.id)} aria-label={`Select sale ${sale.id}`} />
-                      </TableCell>
-                      <TableCell className="whitespace-nowrap">{fmtDate(sale.sale_date)}</TableCell>
-                      <TableCell>
-                        <div className="font-medium">{sale.customer_full_name ?? '—'}</div>
-                        <div className="text-xs text-muted-foreground">{sale.customer_email ?? sale.customer_phone ?? ''}</div>
-                      </TableCell>
-                      <TableCell className="font-mono text-xs">{sale.vin ?? '—'}</TableCell>
-                      <TableCell>{vehicleStr(sale) || '—'}</TableCell>
-                      <TableCell>{sale.stock_number ?? '—'}</TableCell>
-                      <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
-                      <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
-                      <TableCell>{sale.salesperson ?? '—'}</TableCell>
-                      <TableCell className="whitespace-nowrap text-sm">
-                        {sale.vendor_id
-                          ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
-                          : <span className="text-muted-foreground">—</span>}
-                      </TableCell>
-                      <TableCell>
-                        <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
-                          {sale.attribution_status}
-                        </Badge>
-                      </TableCell>
-                      <TableCell className="text-sm">
-                        {(() => {
-                          const m = leadMatches.get(sale.id);
-                          if (!m) return <span className="text-muted-foreground">— No match</span>;
-                          return (
-                            <div className="space-y-0.5">
-                              <div className="font-medium text-green-600 truncate max-w-[140px]">{m.customerName}</div>
-                              <Badge variant="outline" className="text-[10px] px-1 py-0">via {m.matchMethod}</Badge>
-                              {m.vendorName && <div className="text-xs text-muted-foreground truncate max-w-[140px]">{m.vendorName}</div>}
-                            </div>
-                          );
-                        })()}
-                      </TableCell>
-                      <TableCell className="text-right">
-                        <div className="flex justify-end gap-1">
-                          <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => openEdit(sale)}>
-                            <Pencil className="h-4 w-4" />
-                          </Button>
-                          <Button variant="ghost" size="icon" className="h-8 w-8 text-destructive" onClick={() => setConfirmDelete({ ids: [sale.id], label: sale.customer_full_name ?? 'this sale' })}>
-                            <Trash2 className="h-4 w-4" />
-                          </Button>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ))
-                )}
+                ))}
               </TableBody>
             </Table>
           </div>
@@ -796,82 +803,34 @@ export default function SalesPage() {
         <DialogContent className="max-h-[90vh] overflow-y-auto sm:max-w-2xl">
           <DialogHeader><DialogTitle>Edit sale</DialogTitle></DialogHeader>
           <div className="grid gap-3 md:grid-cols-2">
-            <div className="md:col-span-2">
-              <Label>Customer name</Label>
-              <Input value={form.customer_full_name} onChange={e => setForm({ ...form, customer_full_name: e.target.value })} />
-            </div>
-            <div>
-              <Label>Email</Label>
-              <Input value={form.customer_email} onChange={e => setForm({ ...form, customer_email: e.target.value })} />
-            </div>
-            <div>
-              <Label>Phone</Label>
-              <Input value={form.customer_phone} onChange={e => setForm({ ...form, customer_phone: e.target.value })} />
-            </div>
-            <div>
-              <Label>VIN</Label>
-              <Input value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} />
-            </div>
-            <div>
-              <Label>Stock #</Label>
-              <Input value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} />
-            </div>
-            <div>
-              <Label>Year</Label>
-              <Input type="number" value={form.vehicle_year} onChange={e => setForm({ ...form, vehicle_year: e.target.value })} />
-            </div>
-            <div>
-              <Label>Make</Label>
-              <Input value={form.vehicle_make} onChange={e => setForm({ ...form, vehicle_make: e.target.value })} />
-            </div>
-            <div>
-              <Label>Model</Label>
-              <Input value={form.vehicle_model} onChange={e => setForm({ ...form, vehicle_model: e.target.value })} />
-            </div>
-            <div>
-              <Label>Sale date</Label>
-              <Input type="date" value={form.sale_date} onChange={e => setForm({ ...form, sale_date: e.target.value })} />
-            </div>
-            <div>
-              <Label>Sale price</Label>
-              <Input type="number" step="0.01" value={form.sale_price} onChange={e => setForm({ ...form, sale_price: e.target.value })} />
-            </div>
-            <div>
-              <Label>Front gross</Label>
-              <Input type="number" step="0.01" value={form.front_gross} onChange={e => setForm({ ...form, front_gross: e.target.value })} />
-            </div>
-            <div>
-              <Label>Back gross</Label>
-              <Input type="number" step="0.01" value={form.back_gross} onChange={e => setForm({ ...form, back_gross: e.target.value })} />
-            </div>
-            <div>
-              <Label>Total gross</Label>
-              <Input type="number" step="0.01" value={form.total_gross} onChange={e => setForm({ ...form, total_gross: e.target.value })} />
-            </div>
-            <div>
-              <Label>Salesperson</Label>
-              <Input value={form.salesperson} onChange={e => setForm({ ...form, salesperson: e.target.value })} />
-            </div>
-            <div>
-              <Label>Source</Label>
-              <Input value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} />
-            </div>
+            <div className="md:col-span-2"><Label>Customer name</Label>
+              <Input value={form.customer_full_name} onChange={e => setForm({ ...form, customer_full_name: e.target.value })} /></div>
+            <div><Label>Email</Label><Input value={form.customer_email} onChange={e => setForm({ ...form, customer_email: e.target.value })} /></div>
+            <div><Label>Phone</Label><Input value={form.customer_phone} onChange={e => setForm({ ...form, customer_phone: e.target.value })} /></div>
+            <div><Label>VIN</Label><Input value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} /></div>
+            <div><Label>Stock #</Label><Input value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
+            <div><Label>Year</Label><Input type="number" value={form.vehicle_year} onChange={e => setForm({ ...form, vehicle_year: e.target.value })} /></div>
+            <div><Label>Make</Label><Input value={form.vehicle_make} onChange={e => setForm({ ...form, vehicle_make: e.target.value })} /></div>
+            <div><Label>Model</Label><Input value={form.vehicle_model} onChange={e => setForm({ ...form, vehicle_model: e.target.value })} /></div>
+            <div><Label>Sale date</Label><Input type="date" value={form.sale_date} onChange={e => setForm({ ...form, sale_date: e.target.value })} /></div>
+            <div><Label>Sale price</Label><Input type="number" step="0.01" value={form.sale_price} onChange={e => setForm({ ...form, sale_price: e.target.value })} /></div>
+            <div><Label>Front gross</Label><Input type="number" step="0.01" value={form.front_gross} onChange={e => setForm({ ...form, front_gross: e.target.value })} /></div>
+            <div><Label>Back gross</Label><Input type="number" step="0.01" value={form.back_gross} onChange={e => setForm({ ...form, back_gross: e.target.value })} /></div>
+            <div><Label>Total gross</Label><Input type="number" step="0.01" value={form.total_gross} onChange={e => setForm({ ...form, total_gross: e.target.value })} /></div>
+            <div><Label>Salesperson</Label><Input value={form.salesperson} onChange={e => setForm({ ...form, salesperson: e.target.value })} /></div>
+            <div><Label>Source</Label><Input value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} /></div>
             <div>
               <Label>Vendor</Label>
               <Select value={form.vendor_id || NO_VENDOR} onValueChange={v => setForm({ ...form, vendor_id: v === NO_VENDOR ? '' : v })}>
                 <SelectTrigger><SelectValue placeholder="— None —" /></SelectTrigger>
                 <SelectContent>
                   <SelectItem value={NO_VENDOR}>— None —</SelectItem>
-                  {vendorList.map(v => (
-                    <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>
-                  ))}
+                  {vendorList.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
                 </SelectContent>
               </Select>
             </div>
-            <div className="md:col-span-2">
-              <Label>Notes</Label>
-              <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} />
-            </div>
+            <div className="md:col-span-2"><Label>Notes</Label>
+              <Textarea value={form.notes} onChange={e => setForm({ ...form, notes: e.target.value })} /></div>
           </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setEditing(null)}>Cancel</Button>
@@ -896,41 +855,23 @@ export default function SalesPage() {
         </AlertDialogContent>
       </AlertDialog>
 
-      {/* ── Date-range delete: pick dates dialog ──────────────────────────── */}
+      {/* ── Date-range delete: pick dates ─────────────────────────────────── */}
       <Dialog open={dateDeleteOpen} onOpenChange={setDateDeleteOpen}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader>
-            <DialogTitle>Delete sales by date range</DialogTitle>
-          </DialogHeader>
+          <DialogHeader><DialogTitle>Delete sales by date range</DialogTitle></DialogHeader>
           <p className="text-sm text-muted-foreground">
             Permanently delete all sales whose <strong>sale date</strong> falls within the range below.
             You will see a count before confirming.
           </p>
           <div className="grid grid-cols-2 gap-4 pt-2">
-            <div>
-              <Label>From date</Label>
-              <Input
-                type="date"
-                value={deleteRangeFrom}
-                onChange={e => setDeleteRangeFrom(e.target.value)}
-              />
-            </div>
-            <div>
-              <Label>To date</Label>
-              <Input
-                type="date"
-                value={deleteRangeTo}
-                onChange={e => setDeleteRangeTo(e.target.value)}
-              />
-            </div>
+            <div><Label>From date</Label><Input type="date" value={deleteRangeFrom} onChange={e => setDeleteRangeFrom(e.target.value)} /></div>
+            <div><Label>To date</Label><Input type="date" value={deleteRangeTo} onChange={e => setDeleteRangeTo(e.target.value)} /></div>
           </div>
           <DialogFooter className="pt-2">
             <Button variant="outline" onClick={() => setDateDeleteOpen(false)}>Cancel</Button>
-            <Button
-              variant="destructive"
+            <Button variant="destructive"
               disabled={!deleteRangeFrom || !deleteRangeTo || deleteRangeFrom > deleteRangeTo}
-              onClick={previewDateRangeCount}
-            >
+              onClick={previewDateRangeCount}>
               Preview &amp; confirm
             </Button>
           </DialogFooter>
@@ -950,14 +891,9 @@ export default function SalesPage() {
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={() => { setDateDeleteConfirmOpen(false); setDateDeleteOpen(true); }}>
-              Back
-            </AlertDialogCancel>
-            <AlertDialogAction
-              onClick={doDateRangeDelete}
-              disabled={deletingByDate}
-              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
-            >
+            <AlertDialogCancel onClick={() => { setDateDeleteConfirmOpen(false); setDateDeleteOpen(true); }}>Back</AlertDialogCancel>
+            <AlertDialogAction onClick={doDateRangeDelete} disabled={deletingByDate}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90">
               {deletingByDate ? 'Deleting…' : `Delete ${deleteRangeCount ?? ''} record${deleteRangeCount !== 1 ? 's' : ''}`}
             </AlertDialogAction>
           </AlertDialogFooter>
