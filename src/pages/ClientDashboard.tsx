@@ -5,6 +5,7 @@ import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, Info, DollarSign, ShoppingCart, ListChecks, TrendingUp, Download } from 'lucide-react';
 import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -17,63 +18,108 @@ interface SaleLite { sale_date: string | null; total_gross: number | null; gross
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 
+// WHY: Build a list of years from 2020 to current year for the year picker.
+const currentYear = new Date().getFullYear();
+const YEAR_OPTIONS = Array.from({ length: currentYear - 2019 }, (_, i) => currentYear - i);
+
 export default function ClientDashboard() {
   const { profile } = useAuth();
   const { activeOrgId, activeOrg: activeOrgMeta } = useActiveOrg();
   const [org, setOrg] = useState<Org | null>(null);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0, monthlyCost: 0 });
+  const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0, annualCost: 0 });
   const [trendSales, setTrendSales] = useState<SaleLite[]>([]);
   const [exportRows, setExportRows] = useState<Record<string, any>[]>([]);
+
+  // WHY: selectedYear drives all YTD queries. Defaults to current year.
+  // When the user picks a different year, the useEffect re-fires and
+  // re-fetches all stats for that year's Jan 1 → Dec 31 window.
+  const [selectedYear, setSelectedYear] = useState<number>(currentYear);
 
   useEffect(() => {
     if (!activeOrgId) {
       setLoading(false);
       return;
     }
-    // WHY: Reset all stats immediately when org changes so stale numbers
-    // from the previous org never show while the new fetch is in flight.
-    setStats({ leads: 0, sales: 0, revenue: 0, monthlyCost: 0 });
+    // WHY: Reset all stats immediately when org or year changes so stale
+    // numbers from the previous selection never show while the new fetch
+    // is in flight.
+    setStats({ leads: 0, sales: 0, revenue: 0, annualCost: 0 });
     setTrendSales([]);
     setExportRows([]);
     setOrg(null);
     setLoading(true);
+
     const orgId = activeOrgId;
+
+    // WHY: YTD = Jan 1 00:00:00 of selectedYear → Dec 31 23:59:59 of selectedYear.
+    // Using explicit year boundaries means the year filter works for any past year,
+    // not just the current one.
+    const ytdStart = new Date(selectedYear, 0, 1).toISOString();       // Jan 1
+    const ytdEnd   = new Date(selectedYear, 11, 31, 23, 59, 59, 999).toISOString(); // Dec 31
+
+    // Trend: always show last 12 months from today regardless of selected year
     const now = new Date();
-    const mtdStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString();
     const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
 
     Promise.all([
       supabase.from('organizations').select('id, name, slug, status').eq('id', orgId).maybeSingle(),
-      supabase.from('leads').select('id', { count: 'exact', head: true }).eq('organization_id', orgId).gte('lead_date', mtdStart),
-      supabase.from('sales').select('total_gross, gross_revenue').eq('organization_id', orgId).gte('sale_date', mtdStart),
+      // Leads YTD count
+      supabase.from('leads').select('id', { count: 'exact', head: true })
+        .eq('organization_id', orgId)
+        .gte('lead_date', ytdStart)
+        .lte('lead_date', ytdEnd),
+      // Sales YTD
+      supabase.from('sales').select('total_gross, gross_revenue')
+        .eq('organization_id', orgId)
+        .gte('sale_date', ytdStart)
+        .lte('sale_date', ytdEnd),
+      // Vendor costs (monthly × 12 for annual cost)
       supabase.from('vendors').select('monthly_cost').eq('organization_id', orgId).eq('is_active', true),
-      supabase.from('sales').select('sale_date, total_gross, gross_revenue').eq('organization_id', orgId).gte('sale_date', trendStart),
-      supabase.from('leads').select('customer_full_name, customer_email, customer_phone, vehicle_of_interest, lead_date, lead_status, vendor_id').eq('organization_id', orgId).gte('lead_date', mtdStart).limit(5000),
+      // Revenue trend (last 12 months, always current)
+      supabase.from('sales').select('sale_date, total_gross, gross_revenue')
+        .eq('organization_id', orgId)
+        .gte('sale_date', trendStart),
+      // Leads export (YTD for selected year)
+      supabase.from('leads').select('customer_full_name, customer_email, customer_phone, vehicle_of_interest, lead_date, lead_status, vendor_id')
+        .eq('organization_id', orgId)
+        .gte('lead_date', ytdStart)
+        .lte('lead_date', ytdEnd)
+        .limit(5000),
     ]).then(([orgRes, leadsRes, salesRes, vendorsRes, trendRes, leadsExportRes]) => {
       setOrg(orgRes.data ?? null);
       const revenue = (salesRes.data ?? []).reduce(
         (a, s) => a + Number(s.total_gross ?? s.gross_revenue ?? 0), 0,
       );
-      const monthlyCost = (vendorsRes.data ?? []).reduce((a, v) => a + Number(v.monthly_cost ?? 0), 0);
+      // WHY: Annual cost = monthly_cost × 12 so ROI comparison is apples-to-apples
+      // against full-year revenue. For past years we still use the current monthly
+      // cost × 12 as a proxy (historical cost data isn't stored per-month).
+      const annualCost = (vendorsRes.data ?? []).reduce(
+        (a, v) => a + Number(v.monthly_cost ?? 0), 0,
+      ) * 12;
       setStats({
         leads: leadsRes.count ?? 0,
         sales: salesRes.data?.length ?? 0,
         revenue,
-        monthlyCost,
+        annualCost,
       });
       setTrendSales((trendRes.data ?? []) as SaleLite[]);
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
-  }, [activeOrgId]);
+  }, [activeOrgId, selectedYear]);
 
-  // Pro-rate cost to month-to-date elapsed days for fair MTD ROI.
-  const mtdCost = useMemo(() => {
+  // WHY: For the current year, pro-rate the annual cost to YTD elapsed days
+  // so the ROI % reflects only the cost incurred so far this year.
+  // For past years, use the full annual cost since the year is complete.
+  const ytdCost = useMemo(() => {
+    if (selectedYear < currentYear) return stats.annualCost;
     const now = new Date();
-    const daysInMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate();
-    return stats.monthlyCost * (now.getDate() / daysInMonth);
-  }, [stats.monthlyCost]);
+    const startOfYear = new Date(selectedYear, 0, 1);
+    const dayOfYear = Math.ceil((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
+    const daysInYear = selectedYear % 4 === 0 ? 366 : 365;
+    return stats.annualCost * (dayOfYear / daysInYear);
+  }, [stats.annualCost, selectedYear]);
 
   const trend = useMemo(() => {
     const buckets: Record<string, number> = {};
@@ -95,7 +141,7 @@ export default function ClientDashboard() {
   }, [trendSales]);
 
   const exportLeads = () =>
-    downloadCsv(`leads-mtd-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
+    downloadCsv(`leads-ytd-${selectedYear}-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
 
   if (loading) return <p className="text-sm text-muted-foreground">Loading...</p>;
 
@@ -118,32 +164,48 @@ export default function ClientDashboard() {
     );
   }
 
-  const roi = mtdCost > 0 ? (stats.revenue - mtdCost) / mtdCost : 0;
+  const roi = ytdCost > 0 ? (stats.revenue - ytdCost) / ytdCost : 0;
+  const isCurrentYear = selectedYear === currentYear;
+  const periodLabel = isCurrentYear ? 'Year-to-date' : `Full year ${selectedYear}`;
 
   return (
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{activeOrgMeta?.name ?? org?.name ?? 'Dashboard'}</h1>
-          <p className="text-sm text-muted-foreground">Month-to-date · trend over last 12 months</p>
+          <p className="text-sm text-muted-foreground">{periodLabel} · trend over last 12 months</p>
         </div>
-        <div className="flex gap-2">
+        <div className="flex items-center gap-2">
+          {/* WHY: Year picker placed before action buttons so it's clearly a
+              filter that affects the stats, not a button that triggers an action. */}
+          <Select value={String(selectedYear)} onValueChange={v => setSelectedYear(Number(v))}>
+            <SelectTrigger className="w-28">
+              <SelectValue placeholder="Year" />
+            </SelectTrigger>
+            <SelectContent>
+              {YEAR_OPTIONS.map(y => (
+                <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
           <Button variant="outline" onClick={exportLeads} disabled={exportRows.length === 0}>
             <Download className="mr-1 h-4 w-4" /> Export Leads
           </Button>
-          <Button asChild><Link to="/attribution"><TrendingUp className="mr-1 h-4 w-4" />Attribution</Link></Button>
+          <Button asChild>
+            <Link to="/attribution"><TrendingUp className="mr-1 h-4 w-4" />Attribution</Link>
+          </Button>
         </div>
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat icon={ListChecks} label="Leads (MTD)" value={String(stats.leads)} />
-        <Stat icon={ShoppingCart} label="Sales (MTD)" value={String(stats.sales)} />
-        <Stat icon={DollarSign} label="Revenue (MTD)" value={fmtMoney(stats.revenue)} />
+        <Stat icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
+        <Stat icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
+        <Stat icon={DollarSign} label={`Revenue (YTD)`} value={fmtMoney(stats.revenue)} />
         <Stat
           icon={TrendingUp}
-          label="ROI (MTD)"
-          value={mtdCost > 0 && stats.sales > 0 ? `${(roi * 100).toFixed(0)}%` : '—'}
-          sub={`Cost ${fmtMoney(mtdCost)}`}
+          label={`ROI (YTD)`}
+          value={ytdCost > 0 && stats.sales > 0 ? `${(roi * 100).toFixed(0)}%` : '—'}
+          sub={`Cost ${fmtMoney(ytdCost)}`}
         />
       </div>
 
