@@ -449,7 +449,42 @@ export default function UploadPage() {
         };
 
         if (inFileHit) {
-          dupes.push({ rowIndex: rowIdx, name: fullName, email, phone, vin: nVin, stock: nStock, leadDate: leadDateStr, reason: 'Duplicate within file', matchedOn: labelFingerprint(inFileHit), payload, reinstated: false });
+          // ── Priority swap: if incoming row has VIN/Stock# but the already-
+          // accepted row doesn't, evict the weaker row and keep this one.
+          // WHY: The row with VIN/Stock# is essential for sales matching —
+          // we must not discard it in favour of the phone-only version.
+          const existingIdx = readyToInsert.findIndex(r =>
+            (r.__fingerprints as string[]).some(fp => fingerprints.includes(fp))
+          );
+          const existingRow = existingIdx >= 0 ? readyToInsert[existingIdx] : null;
+          const incomingHasVehicle = !!(nVin || nStock);
+          const existingHasVehicle = existingRow ? !!(existingRow.__nVin || existingRow.__nStock) : true;
+
+          if (incomingHasVehicle && !existingHasVehicle && existingRow) {
+            // Evict the weaker existing row → move it to dupes, keep incoming
+            readyToInsert.splice(existingIdx, 1);
+            // Remove its fingerprints from seenInFile so incoming can register
+            (existingRow.__fingerprints as string[]).forEach((fp: string) => seenInFile.delete(fp));
+            dupes.push({
+              rowIndex: existingIdx,
+              name: existingRow.customer_full_name ?? '',
+              email: existingRow.customer_email ?? '',
+              phone: existingRow.customer_phone ?? '',
+              vin: existingRow.__nVin,
+              stock: existingRow.__nStock,
+              leadDate: normDate(existingRow.lead_date),
+              reason: 'Duplicate within file',
+              matchedOn: labelFingerprint(inFileHit) + ' (weaker — no VIN/Stock#)',
+              payload: existingRow,
+              reinstated: false,
+            });
+            // Now accept the incoming (stronger) row
+            fingerprints.forEach(fp => seenInFile.add(fp));
+            readyToInsert.push(payload);
+          } else {
+            // Incoming is not stronger — flag it as dupe normally
+            dupes.push({ rowIndex: rowIdx, name: fullName, email, phone, vin: nVin, stock: nStock, leadDate: leadDateStr, reason: 'Duplicate within file', matchedOn: labelFingerprint(inFileHit), payload, reinstated: false });
+          }
           continue;
         }
         fingerprints.forEach(fp => seenInFile.add(fp));
@@ -529,6 +564,15 @@ export default function UploadPage() {
       setResult({ inserted, duplicates: skipped });
       toast.success(`Imported ${inserted} leads · ${skipped} duplicates skipped`);
       setReviewOpen(false);
+      // Reset form so the import button and file state are cleared
+      setFile(null);
+      setRows([]);
+      setHeaders([]);
+      setHasJsonColumn(false);
+      setJsonColumnName(NONE);
+      setDetectedDupes([]);
+      setCleanRows([]);
+      setUploadId(null);
     } catch (e: any) {
       toast.error(e.message ?? 'Insert failed');
     } finally {
