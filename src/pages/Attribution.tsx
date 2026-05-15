@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
-  Wand2, TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
+  TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import {
@@ -135,7 +135,6 @@ export default function AttributionPage() {
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
-  const [running, setRunning] = useState(false);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
@@ -323,22 +322,6 @@ export default function AttributionPage() {
       category: p.category,
     })), [perf]);
 
-  const runAttribution = async () => {
-    if (!activeOrgId) return;
-    setRunning(true);
-    try {
-      const { data, error } = await supabase.rpc('attribute_sales_for_org', { _org_id: activeOrgId });
-      if (error) throw error;
-      const r = Array.isArray(data) ? data[0] : data;
-      toast.success(`Matched ${r?.matched ?? 0} of ${r?.total_unmatched ?? 0} sales`);
-      await load();
-    } catch (e: any) {
-      toast.error(e.message ?? 'Attribution failed');
-    } finally {
-      setRunning(false);
-    }
-  };
-
   const exportVendorRoi = () => {
     const rows = perf.map(p => ({
       vendor: p.vendorName,
@@ -405,10 +388,6 @@ export default function AttributionPage() {
           </Button>
           <Button variant="outline" onClick={exportSales}>
             <Download className="mr-1 h-4 w-4" /> Sales
-          </Button>
-          <Button onClick={runAttribution} disabled={running}>
-            <Wand2 className="mr-1 h-4 w-4" />
-            {running ? 'Matching...' : 'Run Attribution'}
           </Button>
         </div>
       </div>
