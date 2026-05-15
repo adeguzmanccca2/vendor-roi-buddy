@@ -52,6 +52,7 @@ const FIELDS = [
   { key: 'type_of_vehicle', label: 'Type of vehicle', candidates: ['type of vehicle', 'vehicle type', 'veh type'] },
   { key: 'type_of_leads', label: 'Type of leads', candidates: ['type of leads', 'lead type', 'leads type'] },
   { key: 'stock_number', label: 'Stock number', candidates: ['stock number', 'stock#', 'stock no', 'stk', 'stk#', 'stk no'] },
+  { key: 'notes', label: 'Notes', candidates: ['notes', 'note', 'comments', 'comment', 'remarks', 'memo', 'description'] },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
@@ -395,6 +396,7 @@ export default function UploadPage() {
         type_of_vehicle: get(row, 'type_of_vehicle') || null,
         type_of_leads: get(row, 'type_of_leads') || null,
         stock_number: get(row, 'stock_number') || null,
+        notes: get(row, 'notes') || null,
         lead_status: 'new',
       };
     });
@@ -550,6 +552,7 @@ export default function UploadPage() {
           type_of_vehicle: get(row, 'type_of_vehicle') || null,
           type_of_leads: get(row, 'type_of_leads') || null,
           stock_number: stockNumber,
+          notes: get(row, 'notes') || null,
           lead_status: 'new',
         });
       }
