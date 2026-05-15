@@ -68,19 +68,21 @@ const NONE = '__none__';
 // ---------------------------------------------------------------------------
 
 /**
- * Normalize a VIN: uppercase, trim. Returns null if fewer than 5 chars
- * (too short to be a real VIN — avoids matching on blank/garbage values).
+ * Normalize a VIN: uppercase, strip ALL non-alphanumeric characters
+ * (spaces, dashes, tabs, invisible chars from DMS exports).
+ * Returns null if fewer than 5 chars after cleaning.
  */
 function normVin(raw: string): string | null {
-  const v = raw.trim().toUpperCase();
+  const v = raw.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   return v.length >= 5 ? v : null;
 }
 
 /**
- * Normalize a stock number: uppercase, trim. Returns null if fewer than 2 chars.
+ * Normalize a stock number: uppercase, strip ALL non-alphanumeric characters.
+ * Returns null if fewer than 2 chars after cleaning.
  */
 function normStock(raw: string): string | null {
-  const v = raw.trim().toUpperCase();
+  const v = raw.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
   return v.length >= 2 ? v : null;
 }
 
@@ -241,19 +243,19 @@ export default function SalesUploadPage() {
           const nVin   = normVin(vin);
           const nStock = normStock(stock);
 
-          // ── Within-file dedup: VIN first, then Stock# ─────────────────────
+          // ── Within-file dedup ─────────────────────────────────────────────
           if (nVin && seenVins.has(nVin)) {
             dupesInBatch++;
             dupesDetail.push({ row: rowIdx + 2, name: fullName, vin, stock, reason: 'Duplicate within file', matchedOn: 'VIN' });
             continue;
           }
-          if (!nVin && nStock && seenStocks.has(nStock)) {
+          if (nStock && seenStocks.has(nStock)) {
             dupesInBatch++;
             dupesDetail.push({ row: rowIdx + 2, name: fullName, vin, stock, reason: 'Duplicate within file', matchedOn: 'Stock#' });
             continue;
           }
 
-          // Register identifiers so later rows in this file can match them
+          // Register both identifiers so later rows in this file can match them
           if (nVin)   seenVins.add(nVin);
           if (nStock) seenStocks.add(nStock);
 
@@ -375,8 +377,8 @@ export default function SalesUploadPage() {
           dupesDetail.push({ row: 0, name: r.__name, vin: r.__vinRaw, stock: r.__stockRaw, reason: 'Already in database', matchedOn: 'VIN' });
           continue;
         }
-        // Stock# match — only checked when row has no VIN (VIN wins if present)
-        if (!nv && ns && dbStocks.has(ns)) {
+        // Stock# match — checked independently (not gated on missing VIN)
+        if (ns && dbStocks.has(ns)) {
           existingDupes++;
           dupesDetail.push({ row: 0, name: r.__name, vin: r.__vinRaw, stock: r.__stockRaw, reason: 'Already in database', matchedOn: 'Stock#' });
           continue;
