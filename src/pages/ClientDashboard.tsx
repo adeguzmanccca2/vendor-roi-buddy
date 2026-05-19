@@ -13,7 +13,7 @@ import {
 import { downloadCsv } from '@/lib/exportCsv';
 
 interface Org { id: string; name: string; slug: string; status: string }
-interface SaleLite { sale_date: string | null; total_gross: number | null; gross_revenue: number | null }
+interface SaleLite { sale_date: string | null; sale_price: number | null }
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -70,14 +70,14 @@ export default function ClientDashboard() {
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd),
       // Sales YTD
-      supabase.from('sales').select('total_gross, gross_revenue')
+      supabase.from('sales').select('sale_price')
         .eq('organization_id', orgId)
         .gte('sale_date', ytdStart)
         .lte('sale_date', ytdEnd),
       // Vendor costs (monthly × 12 for annual cost)
       supabase.from('vendors').select('monthly_cost').eq('organization_id', orgId).eq('is_active', true),
       // Revenue trend (last 12 months, always current)
-      supabase.from('sales').select('sale_date, total_gross, gross_revenue')
+      supabase.from('sales').select('sale_date, sale_price')
         .eq('organization_id', orgId)
         .gte('sale_date', trendStart),
       // Leads export (YTD for selected year)
@@ -89,7 +89,7 @@ export default function ClientDashboard() {
     ]).then(([orgRes, leadsRes, salesRes, vendorsRes, trendRes, leadsExportRes]) => {
       setOrg(orgRes.data ?? null);
       const revenue = (salesRes.data ?? []).reduce(
-        (a, s) => a + Number(s.total_gross ?? s.gross_revenue ?? 0), 0,
+        (a, s) => a + Number(s.sale_price ?? 0), 0,
       );
       // WHY: Annual cost = monthly_cost × 12 so ROI comparison is apples-to-apples
       // against full-year revenue. For past years we still use the current monthly
@@ -132,7 +132,7 @@ export default function ClientDashboard() {
       if (!s.sale_date) continue;
       const d = new Date(s.sale_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.total_gross ?? s.gross_revenue ?? 0);
+      if (key in buckets) buckets[key] += Number(s.sale_price ?? 0);
     }
     return Object.entries(buckets).map(([month, revenue]) => ({
       month: month.slice(5) + '/' + month.slice(2, 4),
