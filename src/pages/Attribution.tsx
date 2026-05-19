@@ -28,7 +28,6 @@ interface SaleRow {
   organization_id: string;
   sale_date: string | null;
   sale_price: number | null;
-  total_gross: number | null; gross_revenue: number | null;
   attribution_status: string; attribution_confidence: number | null;
   manual_override: boolean;
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
@@ -52,10 +51,8 @@ interface LeadRow {
   lead_status: string;
 }
 
-function saleRevenue(s: { total_gross?: number | null; gross_revenue?: number | null }): number {
-  const tg = Number(s.total_gross ?? 0);
-  if (tg) return tg;
-  return Number(s.gross_revenue ?? 0);
+function saleRevenue(s: { sale_price?: number | null }): number {
+  return Number(s.sale_price ?? 0);
 }
 
 interface VendorPerf {
@@ -133,7 +130,7 @@ export default function AttributionPage() {
   const [leadCounts, setLeadCounts] = useState<Record<string, number>>({});
   const [unattributedLeads, setUnattributedLeads] = useState<number>(0);
   const [sales, setSales] = useState<SaleRow[]>([]);
-  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
+  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
@@ -160,13 +157,13 @@ export default function AttributionPage() {
           `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
         );
       }
-      let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
+      let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
         .eq('organization_id', activeOrgId)
         .order('sale_date', { ascending: false });
       if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
       if (untilIso) sQ = sQ.lt('sale_date', untilIso);
 
-      const tQ = supabase.from('sales').select('sale_date, sale_price, total_gross, gross_revenue')
+      const tQ = supabase.from('sales').select('sale_date, sale_price')
         .eq('organization_id', activeOrgId)
         .gte('sale_date', trendSinceIso);
 
