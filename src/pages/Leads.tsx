@@ -13,7 +13,7 @@ import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, D
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle, AlertDialogTrigger } from '@/components/ui/alert-dialog';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
-import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload, ChevronLeft, ChevronRight, X } from 'lucide-react';
+import { Plus, Pencil, Download, Trash2, ArrowUp, ArrowDown, ArrowUpDown, Upload, ChevronLeft, ChevronRight, X, Link2 } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
 import { toast } from 'sonner';
 import {
@@ -48,6 +48,18 @@ interface Lead {
   type_of_vehicle: string | null;
   type_of_leads: string | null;
   stock_number: string | null;
+  sale_id: string | null;
+}
+
+interface SaleMatch {
+  id: string;
+  customer_full_name: string | null;
+  customer_phone: string | null;
+  vin: string | null;
+  stock_number: string | null;
+  sale_date: string | null;
+  sale_price: number | null;
+  attribution_status: string;
 }
 
 const STATUS_OPTIONS = ['new', 'contacted', 'appointment', 'sold', 'lost'];
@@ -57,7 +69,7 @@ const PAGE_SIZE = 100;
 // to Supabase .order() for server-side sorting.
 type SortKey = 'created_at' | 'lead_date' | 'customer_full_name' | 'customer_email' | 'vin' | 'lead_status';
 
-const SELECT_FIELDS = 'id, created_at, customer_first_name, customer_last_name, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label, type_of_vehicle, type_of_leads, stock_number';
+const SELECT_FIELDS = 'id, created_at, customer_first_name, customer_last_name, customer_full_name, customer_email, customer_phone, vehicle_of_interest, vehicle_year, vehicle_make, vehicle_model, vin, lead_date, lead_status, vendor_id, manual_override, source_label, type_of_vehicle, type_of_leads, stock_number, sale_id';
 
 function SortHeader({ label, k, sortKey, sortDir, onClick }: {
   label: string; k: SortKey; sortKey: SortKey; sortDir: 'asc' | 'desc'; onClick: (k: SortKey) => void;
@@ -110,6 +122,14 @@ export default function LeadsPage() {
   const [deleteFrom, setDeleteFrom] = useState('');
   const [deleteTo, setDeleteTo] = useState('');
   const [deletingByDate, setDeletingByDate] = useState(false);
+
+  // Link-to-sale state
+  const [linkModalOpen, setLinkModalOpen]   = useState(false);
+  const [linkingLead, setLinkingLead]       = useState<Lead | null>(null);
+  const [saleSearch, setSaleSearch]         = useState('');
+  const [saleResults, setSaleResults]       = useState<SaleMatch[]>([]);
+  const [saleSearching, setSaleSearching]   = useState(false);
+  const [linking, setLinking]               = useState(false);
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -301,6 +321,64 @@ export default function LeadsPage() {
     setDateDeleteOpen(false); setDeleteFrom(''); setDeleteTo('');
     setSelected(new Set());
     load();
+  };
+
+  const openLinkModal = (lead: Lead) => {
+    setLinkingLead(lead);
+    setSaleSearch('');
+    setSaleResults([]);
+    setLinkModalOpen(true);
+  };
+
+  const searchSales = async (q: string) => {
+    setSaleSearch(q);
+    if (!activeOrgId || q.trim().length < 2) { setSaleResults([]); return; }
+    setSaleSearching(true);
+    // Search unmatched sales only (no lead_id) by name, VIN, or stock#
+    const { data } = await supabase
+      .from('sales')
+      .select('id, customer_full_name, customer_phone, vin, stock_number, sale_date, sale_price, attribution_status')
+      .eq('organization_id', activeOrgId)
+      .is('lead_id', null)
+      .or(`customer_full_name.ilike.%${q.trim()}%,vin.ilike.%${q.trim()}%,stock_number.ilike.%${q.trim()}%,customer_phone.ilike.%${q.trim()}%`)
+      .order('sale_date', { ascending: false })
+      .limit(20);
+    setSaleResults((data ?? []) as SaleMatch[]);
+    setSaleSearching(false);
+  };
+
+  const linkToSale = async (sale: SaleMatch) => {
+    if (!linkingLead || !activeOrgId) return;
+    setLinking(true);
+    try {
+      // Update the sale: set lead_id, vendor_id from the lead, mark as manual
+      const { error: saleErr } = await supabase
+        .from('sales')
+        .update({
+          lead_id:               linkingLead.id,
+          vendor_id:             linkingLead.vendor_id,
+          attribution_status:    'manual',
+          manual_override:       true,
+          attribution_confidence: 100,
+        })
+        .eq('id', sale.id);
+      if (saleErr) throw saleErr;
+
+      // Update the lead: mark as sold
+      const { error: leadErr } = await supabase
+        .from('leads')
+        .update({ lead_status: 'sold', sale_id: sale.id })
+        .eq('id', linkingLead.id);
+      if (leadErr) throw leadErr;
+
+      toast.success(`Linked ${linkingLead.customer_full_name ?? 'lead'} → ${sale.customer_full_name ?? 'sale'}`);
+      setLinkModalOpen(false);
+      load();
+    } catch (e: any) {
+      toast.error(e.message ?? 'Link failed');
+    } finally {
+      setLinking(false);
+    }
   };
 
   const deleteOne = async (id: string) => {
@@ -562,6 +640,17 @@ export default function LeadsPage() {
                           </TableCell>
                           <TableCell className="text-right">
                             <div className="flex justify-end gap-1">
+                              {!l.sale_id && (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => openLinkModal(l)}
+                                  title="Link to a sale manually"
+                                  aria-label="Link to sale"
+                                >
+                                  <Link2 className="h-4 w-4 text-blue-500" />
+                                </Button>
+                              )}
                               <Button variant="ghost" size="sm" onClick={() => openEdit(l)} aria-label="Edit lead">
                                 <Pencil className="h-4 w-4" />
                               </Button>
@@ -611,6 +700,75 @@ export default function LeadsPage() {
           )}
         </CardContent>
       </Card>
+      {/* ── Link to Sale Modal ─────────────────────────────────────────── */}
+      <Dialog open={linkModalOpen} onOpenChange={o => { if (!linking) setLinkModalOpen(o); }}>
+        <DialogContent className="max-w-2xl">
+          <DialogHeader>
+            <DialogTitle>Link Lead to Sale</DialogTitle>
+            <DialogDescription>
+              Search for a sale by customer name, VIN, stock#, or phone.
+              Only unmatched sales are shown. This will mark the sale as manually attributed
+              to <strong>{linkingLead?.customer_full_name ?? linkingLead?.customer_phone ?? 'this lead'}</strong>.
+            </DialogDescription>
+          </DialogHeader>
+
+          <div className="grid gap-3">
+            <Input
+              placeholder="Search customer name, VIN, stock #, phone..."
+              value={saleSearch}
+              onChange={e => searchSales(e.target.value)}
+              autoFocus
+            />
+
+            {saleSearching && <p className="text-xs text-muted-foreground">Searching...</p>}
+
+            {!saleSearching && saleSearch.trim().length >= 2 && saleResults.length === 0 && (
+              <p className="text-xs text-muted-foreground">No unmatched sales found for "{saleSearch}".</p>
+            )}
+
+            {saleResults.length > 0 && (
+              <div className="max-h-80 overflow-auto rounded border">
+                <table className="w-full text-xs">
+                  <thead className="sticky top-0 bg-muted">
+                    <tr>
+                      <th className="px-2 py-2 text-left">Customer</th>
+                      <th className="px-2 py-2 text-left">VIN</th>
+                      <th className="px-2 py-2 text-left">Stock #</th>
+                      <th className="px-2 py-2 text-left">Sale Date</th>
+                      <th className="px-2 py-2 text-right">Price</th>
+                      <th className="px-2 py-2"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {saleResults.map(s => (
+                      <tr key={s.id} className="border-t hover:bg-muted/30">
+                        <td className="px-2 py-2 font-medium">{s.customer_full_name ?? '—'}</td>
+                        <td className="px-2 py-2 font-mono text-muted-foreground">{s.vin ?? '—'}</td>
+                        <td className="px-2 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
+                        <td className="px-2 py-2 text-muted-foreground">
+                          {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          {s.sale_price ? `$${Number(s.sale_price).toLocaleString()}` : '—'}
+                        </td>
+                        <td className="px-2 py-2 text-right">
+                          <Button size="sm" disabled={linking} onClick={() => linkToSale(s)}>
+                            {linking ? 'Linking...' : 'Link'}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setLinkModalOpen(false)} disabled={linking}>Cancel</Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }
