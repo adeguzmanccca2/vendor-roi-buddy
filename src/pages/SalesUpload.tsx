@@ -10,7 +10,7 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Upload as UploadIcon, FileSpreadsheet, Wand2, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload as UploadIcon, FileSpreadsheet, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   guessColumn,
@@ -109,7 +109,6 @@ export default function SalesUploadPage() {
   const [rows, setRows] = useState<Record<string, string>[]>([]);
   const [mapping, setMapping] = useState<Record<FieldKey, string>>({} as any);
   const [busy, setBusy] = useState(false);
-  const [attributing, setAttributing] = useState(false);
   const [result, setResult] = useState<{ inserted: number; duplicates: number; skippedRows: SkippedRow[]; uploadId: string } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [rowSkips, setRowSkips] = useState<{ row: number; reason: string }[]>([]);
@@ -272,10 +271,10 @@ export default function SalesUploadPage() {
 
           const front     = normalizeRevenue(get(row, 'front_gross')) ?? 0;
           const back      = normalizeRevenue(get(row, 'back_gross')) ?? 0;
-          const totalCol  = normalizeRevenue(get(row, 'total_gross'));
-          const gross     = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
-          const total     = totalCol ?? ((front + back) || gross);
-          const salePrice = normalizeRevenue(get(row, 'sale_price'));
+          const salePrice = normalizeRevenue(get(row, 'sale_price'))
+                         ?? normalizeRevenue(get(row, 'gross_revenue'))
+                         ?? normalizeRevenue(get(row, 'total_gross'))
+                         ?? ((front + back) || null);
 
           toInsert.push({
             organization_id:         activeOrgId,
@@ -312,10 +311,10 @@ export default function SalesUploadPage() {
             sale_date:               sd ?? new Date().toISOString(),
             date_active:             dActive,
             inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
-            gross_revenue:           gross,
+            gross_revenue:           salePrice,
             front_gross:             front,
             back_gross:              back,
-            total_gross:             total,
+            total_gross:             salePrice,
             sale_price:              salePrice,
             attribution_status:      'unmatched',
             // Internal metadata — stripped before insert
@@ -438,40 +437,16 @@ export default function SalesUploadPage() {
     }
   };
 
-  // ── Run attribution RPC ────────────────────────────────────────────────────
-  const runAttribution = async () => {
-    if (!activeOrgId) return;
-    setAttributing(true);
-    try {
-      const { data, error } = await supabase.rpc('attribute_sales_for_org', { _org_id: activeOrgId });
-      if (error) throw error;
-      const r = Array.isArray(data) ? data[0] : data;
-      toast.success(`Attribution complete: ${r?.matched ?? 0} of ${r?.total_unmatched ?? 0} sales matched`);
-    } catch (e: any) {
-      toast.error(e.message ?? 'Attribution failed');
-    } finally {
-      setAttributing(false);
-    }
-  };
-
-
-
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership first.</p>;
 
   return (
     <div className="space-y-6">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Upload Sales (CSV)</h1>
-          <p className="text-sm text-muted-foreground">
-            For {activeOrg?.name}. Import CRM/DMS sales — duplicates skipped, then run attribution.
-          </p>
-        </div>
-        <Button variant="secondary" onClick={runAttribution} disabled={attributing}>
-          <Wand2 className="mr-1 h-4 w-4" />
-          {attributing ? 'Matching...' : 'Run Attribution'}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Upload Sales (CSV)</h1>
+        <p className="text-sm text-muted-foreground">
+          For {activeOrg?.name}. Import CRM/DMS sales — duplicates skipped automatically.
+        </p>
       </div>
 
       {/* ── Step 1: File picker ─────────────────────────────────────────────── */}
