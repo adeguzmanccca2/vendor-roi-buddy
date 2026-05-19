@@ -94,8 +94,8 @@ function currentMonthPeriod(): Period {
 function periodRange(p: Period): { start: string | null; end: string | null } {
   if (isMonthPeriod(p)) {
     const [y, m] = p.slice(2).split('-').map(Number);
-    const start = new Date(y, m - 1, 1);
-    const end = new Date(y, m, 1);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end   = new Date(Date.UTC(y, m, 1));
     return { start: start.toISOString(), end: end.toISOString() };
   }
   return { start: null, end: null };
