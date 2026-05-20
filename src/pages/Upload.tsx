@@ -78,48 +78,63 @@ function normDate(iso: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-key dedup fingerprints
+// Multi-key dedup fingerprints — 8 conditions, all require vendor + date
 //
-// STEP 1 — if VIN or Stock# is present:
-//   email+VIN, phone+VIN, email+Stock#, phone+Stock#
+// 1. VIN  + vendor + date + name
+// 2. VIN  + vendor + date + phone
+// 3. VIN  + vendor + date + email
+// 4. Stock + vendor + date + name
+// 5. Stock + vendor + date + phone
+// 6. Stock + vendor + date + email
+// 7. name  + phone + vendor + date
+// 8. name  + email + vendor + date
 //
-// STEP 2 — only if BOTH VIN and Stock# are empty (phone leads):
-//   email+lead_date, phone+lead_date,
-//   name+phone+lead_date, name+email+lead_date
+// A row is a duplicate if ANY fingerprint matches an existing lead in the DB
+// or another row already processed in the same file.
 // ---------------------------------------------------------------------------
 function buildLeadFingerprints(opts: {
   email: string; phone: string; vin: string;
-  stock: string; name: string; leadDate: string;
+  stock: string; name: string; leadDate: string; vendor: string;
 }): string[] {
   const keys: string[] = [];
-  const { email, phone, name, leadDate } = opts;
-  const vin   = normVin(opts.vin)   ?? '';
-  const stock = normStock(opts.stock) ?? '';
-  const hasVehicle = vin || stock;
+  const email  = opts.email;
+  const phone  = opts.phone;
+  const name   = opts.name;
+  const date   = opts.leadDate;
+  const vendor = opts.vendor;
+  const vin    = normVin(opts.vin)    ?? '';
+  const stock  = normStock(opts.stock) ?? '';
 
-  if (hasVehicle) {
-    if (email && vin)   keys.push(`email+vin|${email}|${vin}`);
-    if (phone && vin)   keys.push(`phone+vin|${phone}|${vin}`);
-    if (email && stock) keys.push(`email+stock|${email}|${stock}`);
-    if (phone && stock) keys.push(`phone+stock|${phone}|${stock}`);
-  } else {
-    if (email && leadDate)         keys.push(`email+date|${email}|${leadDate}`);
-    if (phone && leadDate)         keys.push(`phone+date|${phone}|${leadDate}`);
-    if (name && phone && leadDate) keys.push(`name+phone+date|${name}|${phone}|${leadDate}`);
-    if (name && email && leadDate) keys.push(`name+email+date|${name}|${email}|${leadDate}`);
+  // VIN-based (conditions 1-3)
+  if (vin) {
+    if (name)  keys.push(`vin+vendor+date+name|${vin}|${vendor}|${date}|${name}`);
+    if (phone) keys.push(`vin+vendor+date+phone|${vin}|${vendor}|${date}|${phone}`);
+    if (email) keys.push(`vin+vendor+date+email|${vin}|${vendor}|${date}|${email}`);
   }
+
+  // Stock-based (conditions 4-6)
+  if (stock) {
+    if (name)  keys.push(`stock+vendor+date+name|${stock}|${vendor}|${date}|${name}`);
+    if (phone) keys.push(`stock+vendor+date+phone|${stock}|${vendor}|${date}|${phone}`);
+    if (email) keys.push(`stock+vendor+date+email|${stock}|${vendor}|${date}|${email}`);
+  }
+
+  // Person-based (conditions 7-8) — fire regardless of VIN/Stock
+  if (name && phone) keys.push(`name+phone+vendor+date|${name}|${phone}|${vendor}|${date}`);
+  if (name && email) keys.push(`name+email+vendor+date|${name}|${email}|${vendor}|${date}`);
+
   return keys;
 }
 
 function labelFingerprint(key: string): string {
-  if (key.startsWith('email+vin|'))       return 'Email + VIN';
-  if (key.startsWith('phone+vin|'))       return 'Phone + VIN';
-  if (key.startsWith('email+stock|'))     return 'Email + Stock#';
-  if (key.startsWith('phone+stock|'))     return 'Phone + Stock#';
-  if (key.startsWith('email+date|'))      return 'Email + Lead Date';
-  if (key.startsWith('phone+date|'))      return 'Phone + Lead Date';
-  if (key.startsWith('name+phone+date|')) return 'Name + Phone + Date';
-  if (key.startsWith('name+email+date|')) return 'Name + Email + Date';
+  if (key.startsWith('vin+vendor+date+name|'))    return 'VIN + Vendor + Date + Name';
+  if (key.startsWith('vin+vendor+date+phone|'))   return 'VIN + Vendor + Date + Phone';
+  if (key.startsWith('vin+vendor+date+email|'))   return 'VIN + Vendor + Date + Email';
+  if (key.startsWith('stock+vendor+date+name|'))  return 'Stock# + Vendor + Date + Name';
+  if (key.startsWith('stock+vendor+date+phone|')) return 'Stock# + Vendor + Date + Phone';
+  if (key.startsWith('stock+vendor+date+email|')) return 'Stock# + Vendor + Date + Email';
+  if (key.startsWith('name+phone+vendor+date|'))  return 'Name + Phone + Vendor + Date';
+  if (key.startsWith('name+email+vendor+date|'))  return 'Name + Email + Vendor + Date';
   return key;
 }
 
@@ -398,7 +413,7 @@ export default function UploadPage() {
         const leadDateIso = parseLeadDate(leadDateRaw) ?? new Date().toISOString();
         const leadDateStr = normDate(leadDateIso);
 
-        const fingerprints = buildLeadFingerprints({ email: normEmail, phone: normPhone, vin: nVin, stock: nStock, name: normNameStr, leadDate: leadDateStr });
+        const fingerprints = buildLeadFingerprints({ email: normEmail, phone: normPhone, vin: nVin, stock: nStock, name: normNameStr, leadDate: leadDateStr, vendor: vendorId === NONE ? 'unassigned' : vendorId });
         const inFileHit = fingerprints.find(fp => seenInFile.has(fp));
 
         const parsed = parseVehicle(veh);
@@ -491,13 +506,23 @@ export default function UploadPage() {
         readyToInsert.push(payload);
       }
 
-      // Query DB for existing leads — only fields needed to rebuild fingerprints
-      const { data: existingLeads, error: existingErr } = await supabase
-        .from('leads')
-        .select('normalized_email, normalized_phone, vin, stock_number, customer_full_name, lead_date')
-        .eq('organization_id', activeOrgId)
-        .limit(10000);
-      if (existingErr) throw new Error(`Dedup DB check failed: ${existingErr.message}`);
+      // Query DB for existing leads — paginated to handle any org size
+      // WHY: A single .limit(10000) would miss leads beyond that count,
+      // causing duplicates to slip through for large orgs.
+      const PAGE = 1000;
+      let existingLeads: any[] = [];
+      let from = 0;
+      while (true) {
+        const { data, error: existingErr } = await supabase
+          .from('leads')
+          .select('normalized_email, normalized_phone, vin, stock_number, customer_full_name, lead_date, vendor_id')
+          .eq('organization_id', activeOrgId)
+          .range(from, from + PAGE - 1);
+        if (existingErr) throw new Error(`Dedup DB check failed: ${existingErr.message}`);
+        existingLeads = existingLeads.concat(data ?? []);
+        if ((data ?? []).length < PAGE) break;
+        from += PAGE;
+      }
 
       const dbFingerprints = new Set<string>();
       for (const dbRow of existingLeads ?? []) {
@@ -508,6 +533,7 @@ export default function UploadPage() {
           stock:    dbRow.stock_number ?? '',
           name:     normalizeName(dbRow.customer_full_name ?? ''),
           leadDate: normDate(dbRow.lead_date),
+          vendor:   dbRow.vendor_id ?? 'unassigned',
         }).forEach(fp => dbFingerprints.add(fp));
       }
 
