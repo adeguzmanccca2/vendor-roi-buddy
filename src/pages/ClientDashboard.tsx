@@ -58,8 +58,8 @@ export default function ClientDashboard() {
     // WHY: YTD = Jan 1 00:00:00 of selectedYear → Dec 31 23:59:59 of selectedYear.
     // Using explicit year boundaries means the year filter works for any past year,
     // not just the current one.
-    const ytdStart = new Date(selectedYear, 0, 1).toISOString();       // Jan 1
-    const ytdEnd   = new Date(selectedYear, 11, 31, 23, 59, 59, 999).toISOString(); // Dec 31
+    const ytdStart = new Date(Date.UTC(selectedYear, 0, 1)).toISOString();        // Jan 1 UTC
+    const ytdEnd   = new Date(Date.UTC(selectedYear, 11, 31, 23, 59, 59, 999)).toISOString(); // Dec 31 UTC
 
     // Trend: always show last 12 months from today regardless of selected year
     const now = new Date();
