@@ -25,6 +25,7 @@ const CURRENT_YEAR = new Date().getFullYear();
 const YEARS = Array.from({ length: CURRENT_YEAR - 2020 + 1 }, (_, i) => CURRENT_YEAR - i);
 const VARIANCE_THRESHOLD = 0.05;
 const DEBOUNCE_MS = 800;
+const PAGE_SIZE = 1000;
 
 export default function ReportsPage() {
   const { activeOrgId, activeOrg } = useActiveOrg();
@@ -52,37 +53,57 @@ export default function ReportsPage() {
     (async () => {
       setLoading(true);
       try {
-        const sysPromises = Array.from({ length: 12 }, (_, i) => {
-          const start = new Date(Date.UTC(year, i, 1)).toISOString();
-          const end = new Date(Date.UTC(year, i + 1, 1)).toISOString();
-          let q = supabase.from('leads').select('id', { count: 'exact', head: true })
+        const startDate = `${year}-01-01`;
+        const endDate = `${year + 1}-01-01`;
+
+        const allLeadDates: string[] = [];
+        for (let offset = 0; ; offset += PAGE_SIZE) {
+          let q = supabase.from('leads').select('lead_date')
             .eq('organization_id', activeOrgId)
-            .gte('lead_date', start)
-            .lt('lead_date', end);
+            .gte('lead_date', startDate)
+            .lt('lead_date', endDate)
+            .order('lead_date')
+            .range(offset, offset + PAGE_SIZE - 1);
           if (vendorId !== 'all') q = q.eq('vendor_id', vendorId);
-          return q;
-        });
+          const { data, error } = await q;
+          if (error) throw error;
+          if (!data || data.length === 0) break;
+          for (const row of data) {
+            if (row.lead_date) allLeadDates.push(row.lead_date);
+          }
+          if (data.length < PAGE_SIZE) break;
+        }
+        if (cancelled) return;
+
+        const counts: Record<number, number> = {};
+        for (let m = 1; m <= 12; m++) counts[m] = 0;
+        for (const d of allLeadDates) {
+          const month = new Date(d).getUTCMonth() + 1;
+          if (month >= 1 && month <= 12) counts[month]++;
+        }
 
         let crmQ = (supabase as any).from('lead_reports').select('*')
           .eq('organization_id', activeOrgId)
           .eq('year', year);
-        crmQ = vendorId === 'all' ? crmQ.is('vendor_id', null) : crmQ.eq('vendor_id', vendorId);
+        if (vendorId !== 'all') crmQ = crmQ.eq('vendor_id', vendorId);
 
-        const [sysResults, crmResult] = await Promise.all([Promise.all(sysPromises), crmQ]);
+        const crmResult = await crmQ;
         if (cancelled) return;
-
-        const counts: Record<number, number> = {};
-        sysResults.forEach((r, i) => { counts[i + 1] = r.count ?? 0; });
-
         if (crmResult.error) {
           toast.error('Failed to load CRM data: ' + crmResult.error.message);
         }
         const rows = (crmResult.data ?? []) as LeadReportRow[];
         const rowMap: Record<number, LeadReportRow> = {};
         const drafts: Record<number, number> = {};
-        for (const r of rows) {
-          rowMap[r.month] = r;
-          drafts[r.month] = r.crm_count;
+        if (vendorId === 'all') {
+          for (const r of rows) {
+            drafts[r.month] = (drafts[r.month] ?? 0) + (r.crm_count ?? 0);
+          }
+        } else {
+          for (const r of rows) {
+            rowMap[r.month] = r;
+            drafts[r.month] = r.crm_count;
+          }
         }
 
         setSystemCounts(counts);
@@ -105,6 +126,7 @@ export default function ReportsPage() {
 
   const saveCrm = async (month: number, value: number) => {
     if (!activeOrgId) return;
+    if (vendorId === 'all') return;
     const existing = crmRows[month];
     if (existing) {
       const { data, error } = await (supabase as any).from('lead_reports')
@@ -117,7 +139,7 @@ export default function ReportsPage() {
     } else {
       const payload = {
         organization_id: activeOrgId,
-        vendor_id: vendorId === 'all' ? null : vendorId,
+        vendor_id: vendorId,
         year,
         month,
         crm_count: value,
@@ -130,6 +152,7 @@ export default function ReportsPage() {
   };
 
   const handleCrmChange = (month: number, raw: string) => {
+    if (vendorId === 'all') return;
     const num = raw === '' ? 0 : Math.max(0, parseInt(raw, 10) || 0);
     setCrmDrafts(prev => ({ ...prev, [month]: num }));
     const existingTimer = saveTimers.current.get(month);
@@ -163,6 +186,7 @@ export default function ReportsPage() {
 
   const fmtDiff = (n: number) => (n > 0 ? `+${n}` : String(n));
   const fmtPct = (v: number | null) => v === null ? '—' : `${(v * 100).toFixed(1)}%`;
+  const crmReadOnly = vendorId === 'all';
 
   return (
     <div className="space-y-6">
@@ -225,6 +249,8 @@ export default function ReportsPage() {
                         min={0}
                         value={crmDrafts[r.month] ?? ''}
                         onChange={e => handleCrmChange(r.month, e.target.value)}
+                        readOnly={crmReadOnly}
+                        disabled={crmReadOnly}
                         className="ml-auto h-8 w-24 text-right"
                       />
                     </td>
