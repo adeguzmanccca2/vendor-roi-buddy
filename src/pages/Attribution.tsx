@@ -7,8 +7,14 @@ import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
-  TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil,
+  TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil, Info,
 } from 'lucide-react';
+import {
+  Tooltip as UITooltip,
+  TooltipContent,
+  TooltipProvider,
+  TooltipTrigger,
+} from '@/components/ui/tooltip';
 import { toast } from 'sonner';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
@@ -28,7 +34,6 @@ interface SaleRow {
   organization_id: string;
   sale_date: string | null;
   sale_price: number | null;
-  total_gross: number | null; gross_revenue: number | null;
   attribution_status: string; attribution_confidence: number | null;
   manual_override: boolean;
   vehicle_year: number | null; vehicle_make: string | null; vehicle_model: string | null;
@@ -52,10 +57,8 @@ interface LeadRow {
   lead_status: string;
 }
 
-function saleRevenue(s: { total_gross?: number | null; gross_revenue?: number | null }): number {
-  const tg = Number(s.total_gross ?? 0);
-  if (tg) return tg;
-  return Number(s.gross_revenue ?? 0);
+function saleRevenue(s: { sale_price?: number | null }): number {
+  return Number(s.sale_price ?? 0);
 }
 
 interface VendorPerf {
@@ -97,8 +100,8 @@ function currentMonthPeriod(): Period {
 function periodRange(p: Period): { start: string | null; end: string | null } {
   if (isMonthPeriod(p)) {
     const [y, m] = p.slice(2).split('-').map(Number);
-    const start = new Date(y, m - 1, 1);
-    const end = new Date(y, m, 1);
+    const start = new Date(Date.UTC(y, m - 1, 1));
+    const end   = new Date(Date.UTC(y, m, 1));
     return { start: start.toISOString(), end: end.toISOString() };
   }
   return { start: null, end: null };
@@ -133,7 +136,7 @@ export default function AttributionPage() {
   const [leadCounts, setLeadCounts] = useState<Record<string, number>>({});
   const [unattributedLeads, setUnattributedLeads] = useState<number>(0);
   const [sales, setSales] = useState<SaleRow[]>([]);
-  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null; total_gross: number | null; gross_revenue: number | null }[]>([]);
+  const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null }[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
@@ -160,13 +163,13 @@ export default function AttributionPage() {
           `and(lead_date.is.null,created_at.gte.${sinceIso},created_at.lt.${untilIso})`,
         );
       }
-      let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, total_gross, gross_revenue, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
+      let sQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
         .eq('organization_id', activeOrgId)
         .order('sale_date', { ascending: false });
       if (sinceIso) sQ = sQ.gte('sale_date', sinceIso);
       if (untilIso) sQ = sQ.lt('sale_date', untilIso);
 
-      const tQ = supabase.from('sales').select('sale_date, sale_price, total_gross, gross_revenue')
+      const tQ = supabase.from('sales').select('sale_date, sale_price')
         .eq('organization_id', activeOrgId)
         .gte('sale_date', trendSinceIso);
 
@@ -464,7 +467,21 @@ export default function AttributionPage() {
                   <th className="px-4 py-2 text-left">Vendor</th>
                   <th className="px-4 py-2 text-right">Leads</th>
                   <th className="px-4 py-2 text-right">Sales</th>
-                  <th className="px-4 py-2 text-right">Close %</th>
+                  <th className="px-4 py-2 text-right">
+                    <TooltipProvider>
+                      <UITooltip>
+                        <TooltipTrigger asChild>
+                          <span className="inline-flex items-center justify-end gap-1 cursor-default">
+                            Close %
+                            <Info className="h-3 w-3 text-muted-foreground" />
+                          </span>
+                        </TooltipTrigger>
+                        <TooltipContent side="top" className="max-w-xs text-xs">
+                          Sales are counted by <strong>sale date</strong>; leads are counted by <strong>lead date</strong>. A vendor can show more sales than leads when customers submitted their lead in a prior period but closed this month.
+                        </TooltipContent>
+                      </UITooltip>
+                    </TooltipProvider>
+                  </th>
                   <th className="px-4 py-2 text-right">Cost</th>
                   <th className="px-4 py-2 text-right">CPL</th>
                   <th className="px-4 py-2 text-right">CPA</th>
@@ -493,7 +510,25 @@ export default function AttributionPage() {
                         </button>
                       ) : r.sales}
                     </td>
-                    <td className="px-4 py-2 text-right">{fmtPct(r.closeRate)}</td>
+                    <td className="px-4 py-2 text-right">
+                      {r.closeRate > 1 ? (
+                        <TooltipProvider>
+                          <UITooltip>
+                            <TooltipTrigger asChild>
+                              <span className="inline-flex items-center gap-1 rounded bg-amber-100 px-1.5 py-0.5 font-medium text-amber-800 dark:bg-amber-900/40 dark:text-amber-300 cursor-default">
+                                {fmtPct(r.closeRate)}
+                                <Info className="h-3 w-3" />
+                              </span>
+                            </TooltipTrigger>
+                            <TooltipContent side="top" className="max-w-xs text-xs">
+                              Close % exceeds 100% because some sales this period were matched to leads from a prior period. The sales are correctly attributed — there are just more closings than new leads this month.
+                            </TooltipContent>
+                          </UITooltip>
+                        </TooltipProvider>
+                      ) : (
+                        fmtPct(r.closeRate)
+                      )}
+                    </td>
                     <td className="px-4 py-2 text-right">{r.cost > 0 ? fmtMoney(r.cost) : '—'}</td>
                     <td className="px-4 py-2 text-right">{r.cpl > 0 ? fmtMoney(r.cpl) : '—'}</td>
                     <td className="px-4 py-2 text-right">{r.cpa > 0 ? fmtMoney(r.cpa) : '—'}</td>
