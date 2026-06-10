@@ -10,11 +10,10 @@ import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
-import { Upload as UploadIcon, FileSpreadsheet, Wand2, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
+import { Upload as UploadIcon, FileSpreadsheet, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import {
   guessColumn,
-  normalizeEmail,
   normalizePhone,
   normalizeRevenue,
   parseLeadDate,
@@ -23,41 +22,27 @@ import {
 } from '@/lib/normalize';
 
 // ---------------------------------------------------------------------------
-// Field definitions (unchanged from original)
+// Field definitions — only columns shown in the mapper UI
+// Hidden fields (home_phone, email, birthday, gross columns, etc.) are
+// intentionally excluded from the mapper but their DB columns are untouched.
 // ---------------------------------------------------------------------------
 const FIELDS = [
-  { key: 'row_number',               label: 'Row #',                    candidates: ['row', 'row #', 'row number', '#'] },
-  { key: 'full_name',                label: 'Name',                     candidates: ['name', 'full name', 'customer name', 'buyer', 'buyer name'] },
-  { key: 'first_name',               label: 'First name',               candidates: ['first name', 'firstname', 'first', 'fname', 'buyer first'] },
-  { key: 'last_name',                label: 'Last name',                candidates: ['last name', 'lastname', 'last', 'lname', 'surname', 'buyer last'] },
-  { key: 'address',                  label: 'Address',                  candidates: ['address', 'street', 'street address'] },
-  { key: 'city',                     label: 'City',                     candidates: ['city'] },
-  { key: 'state',                    label: 'State',                    candidates: ['state', 'province'] },
-  { key: 'zip_code',                 label: 'Zip code',                 candidates: ['zip', 'zip code', 'postal', 'postal code'] },
-  { key: 'birthday',                 label: 'Birthday',                 candidates: ['birthday', 'birth date', 'dob', 'date of birth'] },
-  { key: 'email',                    label: 'Email address',            candidates: ['email', 'e-mail', 'email address', 'customer email', 'buyer email'] },
-  { key: 'home_phone',               label: 'Home phone',               candidates: ['home phone', 'home', 'home tel'] },
-  { key: 'phone',                    label: 'Cell phone',               candidates: ['cell phone', 'cell', 'mobile', 'mobile phone'] },
-  { key: 'work_phone',               label: 'Work phone',               candidates: ['work phone', 'work', 'office phone'] },
-  { key: 'stock_number',             label: 'Stock #',                  candidates: ['stock', 'stock number', 'stock#', 'stock #'] },
-  { key: 'vin',                      label: 'VIN',                      candidates: ['vin', 'vehicle vin', 'vin #', 'vin number'] },
-  { key: 'vehicle',                  label: 'Vehicle (year/make/model)', candidates: ['vehicle', 'sold vehicle', 'unit', 'description'] },
-  { key: 'date_active',              label: 'Date active',              candidates: ['date active', 'active date', 'first active'] },
-  { key: 'sale_date',                label: 'Date sold',                candidates: ['date sold', 'sale date', 'sold date', 'deal date', 'closed', 'delivery date'] },
-  { key: 'front_gross',              label: 'Front',                    candidates: ['front', 'front gross', 'fe gross'] },
-  { key: 'back_gross',               label: 'Back',                     candidates: ['back', 'back gross', 'be gross', 'fi gross'] },
-  { key: 'total_gross',              label: 'Total',                    candidates: ['total', 'total gross'] },
-  { key: 'sale_price',               label: 'Sale price',               candidates: ['sale price', 'price', 'amount'] },
-  { key: 'gross_revenue',            label: 'Gross revenue',            candidates: ['gross', 'revenue'] },
-  { key: 'profit_loss',              label: 'P/L',                      candidates: ['p/l', 'pl', 'profit/loss', 'profit loss'] },
-  { key: 'new_used',                 label: 'N/U',                      candidates: ['n/u', 'nu', 'new/used', 'new used', 'condition'] },
-  { key: 'salesperson',              label: 'Salesperson',              candidates: ['salesperson', 'sales rep', 'rep', 'sold by'] },
-  { key: 'fi_manager',               label: 'FI Manager',               candidates: ['fi manager', 'f&i manager', 'finance manager', 'fi mgr'] },
-  { key: 'up_type',                  label: 'Up Type',                  candidates: ['up type', 'up', 'lead type'] },
-  { key: 'source',                   label: 'Source',                   candidates: ['source', 'lead source', 'origin'] },
-  { key: 'deal_status',              label: 'Deal status',              candidates: ['deal status', 'status'] },
-  { key: 'dms_deal_id',              label: 'DMS Deal ID',              candidates: ['dms deal id', 'dms id', 'deal id', 'deal #', 'deal number', 'deal#', 'invoice'] },
-  { key: 'inventory_acquired_date',  label: 'Inventory acquired date',  candidates: ['inventory acquired date', 'acquired date', 'inventory date', 'in stock date'] },
+  { key: 'full_name',    label: 'Name',         candidates: ['name', 'full name', 'customer name', 'buyer', 'buyer name'] },
+  { key: 'address',      label: 'Address',       candidates: ['address', 'street', 'street address'] },
+  { key: 'city',         label: 'City',          candidates: ['city'] },
+  { key: 'state',        label: 'State',         candidates: ['state', 'province'] },
+  { key: 'zip_code',     label: 'Zip code',      candidates: ['zip', 'zip code', 'postal', 'postal code'] },
+  { key: 'phone',        label: 'Cell phone',    candidates: ['cell phone', 'cell', 'mobile', 'mobile phone', 'phone', 'phone number', 'tel'] },
+  { key: 'work_phone',   label: 'Work phone',    candidates: ['work phone', 'work', 'office phone'] },
+  { key: 'stock_number', label: 'Stock #',       candidates: ['stock', 'stock number', 'stock#', 'stock #'] },
+  { key: 'vin',          label: 'VIN',           candidates: ['vin', 'vehicle vin', 'vin #', 'vin number'] },
+  { key: 'vehicle',      label: 'Vehicle',       candidates: ['vehicle', 'sold vehicle', 'unit', 'description'] },
+  { key: 'sale_date',    label: 'Date sold',     candidates: ['date sold', 'sale date', 'sold date', 'deal date', 'closed', 'delivery date'] },
+  { key: 'body',         label: 'Body',          candidates: ['body', 'body style', 'bodystyle', 'body type'] },
+  { key: 'sale_price',   label: 'Sale price',    candidates: ['sale price', 'price', 'amount'] },
+  { key: 'salesperson',  label: 'Salesperson',   candidates: ['salesperson', 'sales rep', 'rep', 'sold by'] },
+  { key: 'lending_name', label: 'Lending name',  candidates: ['lending name', 'lender', 'lender name', 'finance source', 'bank'] },
+  { key: 'notes',        label: 'Notes',         candidates: ['notes', 'note', 'comments', 'comment', 'remarks', 'memo'] },
 ] as const;
 
 type FieldKey = (typeof FIELDS)[number]['key'];
@@ -109,7 +94,6 @@ export default function SalesUploadPage() {
   const [rows, setRows] = useState<Record<string, string>[]>([]);
   const [mapping, setMapping] = useState<Record<FieldKey, string>>({} as any);
   const [busy, setBusy] = useState(false);
-  const [attributing, setAttributing] = useState(false);
   const [result, setResult] = useState<{ inserted: number; duplicates: number; skippedRows: SkippedRow[]; uploadId: string } | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [rowSkips, setRowSkips] = useState<{ row: number; reason: string }[]>([]);
@@ -223,18 +207,13 @@ export default function SalesUploadPage() {
       for (let rowIdx = 0; rowIdx < rows.length; rowIdx++) {
         const row = rows[rowIdx];
         try {
-          const fullName  = get(row, 'full_name') ||
-            [get(row, 'first_name'), get(row, 'last_name')].filter(Boolean).join(' ');
-          const email     = get(row, 'email');
+          const fullName  = get(row, 'full_name');
           const phone     = get(row, 'phone');
-          const homePhone = get(row, 'home_phone');
-          const workPhone = get(row, 'work_phone');
           const vin       = get(row, 'vin');
           const stock     = get(row, 'stock_number');
-          const dmsId     = get(row, 'dms_deal_id');
 
           // Skip completely empty rows
-          if (!fullName && !email && !phone && !homePhone && !workPhone && !vin && !stock && !dmsId) {
+          if (!fullName && !phone && !vin && !stock) {
             rowErrors.push({ row: rowIdx + 2, reason: 'no identifying info' });
             continue;
           }
@@ -260,69 +239,47 @@ export default function SalesUploadPage() {
           if (nStock) seenStocks.add(nStock);
 
           // Parse remaining fields
-          const normEmail = normalizeEmail(email);
-          const normPhone = normalizePhone(phone) ?? normalizePhone(homePhone) ?? normalizePhone(workPhone);
+          const normPhone = normalizePhone(phone) ?? normalizePhone(get(row, 'work_phone'));
           const veh       = get(row, 'vehicle');
           const parsed    = parseVehicle(veh);
           const { first, last } = splitName(fullName);
           const sd        = parseLeadDate(get(row, 'sale_date'));
-          const dActive   = parseLeadDate(get(row, 'date_active'));
-          const bday      = parseLeadDate(get(row, 'birthday'));
-          const invAcq    = parseLeadDate(get(row, 'inventory_acquired_date'));
 
-          const front     = normalizeRevenue(get(row, 'front_gross')) ?? 0;
-          const back      = normalizeRevenue(get(row, 'back_gross')) ?? 0;
-          const totalCol  = normalizeRevenue(get(row, 'total_gross'));
-          const gross     = normalizeRevenue(get(row, 'gross_revenue')) ?? totalCol ?? (front + back);
-          const total     = totalCol ?? ((front + back) || gross);
-          const salePrice = normalizeRevenue(get(row, 'sale_price'));
+          const salePrice = normalizeRevenue(get(row, 'sale_price')) ?? null;
 
           toInsert.push({
-            organization_id:         activeOrgId,
-            raw_upload_id:           upload.id,
-            customer_first_name:     first || get(row, 'first_name') || null,
-            customer_last_name:      last  || get(row, 'last_name')  || null,
-            customer_full_name:      fullName  || null,
-            customer_email:          email     || null,
-            customer_phone:          phone     || null,
-            home_phone:              homePhone || null,
-            work_phone:              workPhone || null,
-            address:                 get(row, 'address')  || null,
-            city:                    get(row, 'city')     || null,
-            state:                   get(row, 'state')    || null,
-            zip_code:                get(row, 'zip_code') || null,
-            birthday:                bday ? bday.slice(0, 10) : null,
-            normalized_email:        normEmail,
-            normalized_phone:        normPhone,
-            vehicle_of_interest:     veh   || null,
-            vehicle_year:            parsed.year,
-            vehicle_make:            parsed.make,
-            vehicle_model:           parsed.model,
-            vin:                     nVin  || null,
-            stock_number:            nStock || null,
-            deal_number:             dmsId || null,
-            dms_deal_id:             dmsId || null,
-            salesperson:             get(row, 'salesperson') || null,
-            fi_manager:              get(row, 'fi_manager')  || null,
-            up_type:                 get(row, 'up_type')     || null,
-            source_label:            get(row, 'source')      || null,
-            deal_status:             get(row, 'deal_status') || null,
-            profit_loss:             get(row, 'profit_loss') || null,
-            new_used:                get(row, 'new_used')    || null,
-            sale_date:               sd ?? new Date().toISOString(),
-            date_active:             dActive,
-            inventory_acquired_date: invAcq ? invAcq.slice(0, 10) : null,
-            gross_revenue:           gross,
-            front_gross:             front,
-            back_gross:              back,
-            total_gross:             total,
-            sale_price:              salePrice,
-            attribution_status:      'unmatched',
+            organization_id:     activeOrgId,
+            raw_upload_id:       upload.id,
+            customer_first_name: first    || null,
+            customer_last_name:  last     || null,
+            customer_full_name:  fullName || null,
+            customer_phone:      phone    || null,
+            work_phone:          get(row, 'work_phone') || null,
+            normalized_phone:    normPhone,
+            address:             get(row, 'address')      || null,
+            city:                get(row, 'city')         || null,
+            state:               get(row, 'state')        || null,
+            zip_code:            get(row, 'zip_code')     || null,
+            vehicle_of_interest: veh || null,
+            vehicle_year:        parsed.year,
+            vehicle_make:        parsed.make,
+            vehicle_model:       parsed.model,
+            vin:                 nVin   || null,
+            stock_number:        nStock || null,
+            salesperson:         get(row, 'salesperson')  || null,
+            sale_date:           sd ?? new Date().toISOString(),
+            gross_revenue:       salePrice,
+            total_gross:         salePrice,
+            sale_price:          salePrice,
+            body:                get(row, 'body')         || null,
+            lending_name:        get(row, 'lending_name') || null,
+            notes:               get(row, 'notes')        || null,
+            attribution_status:  'unmatched',
             // Internal metadata — stripped before insert
-            __nVin:   nVin,
-            __nStock: nStock,
-            __name:   fullName,
-            __vinRaw: vin,
+            __nVin:     nVin,
+            __nStock:   nStock,
+            __name:     fullName,
+            __vinRaw:   vin,
             __stockRaw: stock,
           });
         } catch (rowErr: any) {
@@ -438,40 +395,16 @@ export default function SalesUploadPage() {
     }
   };
 
-  // ── Run attribution RPC ────────────────────────────────────────────────────
-  const runAttribution = async () => {
-    if (!activeOrgId) return;
-    setAttributing(true);
-    try {
-      const { data, error } = await supabase.rpc('attribute_sales_for_org', { _org_id: activeOrgId });
-      if (error) throw error;
-      const r = Array.isArray(data) ? data[0] : data;
-      toast.success(`Attribution complete: ${r?.matched ?? 0} of ${r?.total_unmatched ?? 0} sales matched`);
-    } catch (e: any) {
-      toast.error(e.message ?? 'Attribution failed');
-    } finally {
-      setAttributing(false);
-    }
-  };
-
-
-
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership first.</p>;
 
   return (
     <div className="space-y-6">
       {/* ── Header ─────────────────────────────────────────────────────────── */}
-      <div className="flex items-start justify-between gap-4">
-        <div>
-          <h1 className="text-2xl font-bold text-foreground">Upload Sales (CSV)</h1>
-          <p className="text-sm text-muted-foreground">
-            For {activeOrg?.name}. Import CRM/DMS sales — duplicates skipped, then run attribution.
-          </p>
-        </div>
-        <Button variant="secondary" onClick={runAttribution} disabled={attributing}>
-          <Wand2 className="mr-1 h-4 w-4" />
-          {attributing ? 'Matching...' : 'Run Attribution'}
-        </Button>
+      <div>
+        <h1 className="text-2xl font-bold text-foreground">Upload Sales (CSV)</h1>
+        <p className="text-sm text-muted-foreground">
+          For {activeOrg?.name}. Import CRM/DMS sales — duplicates skipped automatically.
+        </p>
       </div>
 
       {/* ── Step 1: File picker ─────────────────────────────────────────────── */}

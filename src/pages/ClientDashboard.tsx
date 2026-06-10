@@ -13,7 +13,8 @@ import {
 import { downloadCsv } from '@/lib/exportCsv';
 
 interface Org { id: string; name: string; slug: string; status: string }
-interface SaleLite { sale_date: string | null; total_gross: number | null; gross_revenue: number | null }
+interface SaleLite { sale_date: string | null; sale_price: number | null }
+interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null }
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -27,7 +28,8 @@ export default function ClientDashboard() {
   const { activeOrgId, activeOrg: activeOrgMeta } = useActiveOrg();
   const [org, setOrg] = useState<Org | null>(null);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0, annualCost: 0 });
+  const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0 });
+  const [vendorCosts, setVendorCosts] = useState<VendorCost[]>([]);
   const [trendSales, setTrendSales] = useState<SaleLite[]>([]);
   const [exportRows, setExportRows] = useState<Record<string, any>[]>([]);
 
@@ -44,7 +46,8 @@ export default function ClientDashboard() {
     // WHY: Reset all stats immediately when org or year changes so stale
     // numbers from the previous selection never show while the new fetch
     // is in flight.
-    setStats({ leads: 0, sales: 0, revenue: 0, annualCost: 0 });
+    setStats({ leads: 0, sales: 0, revenue: 0 });
+    setVendorCosts([]);
     setTrendSales([]);
     setExportRows([]);
     setOrg(null);
@@ -55,8 +58,8 @@ export default function ClientDashboard() {
     // WHY: YTD = Jan 1 00:00:00 of selectedYear → Dec 31 23:59:59 of selectedYear.
     // Using explicit year boundaries means the year filter works for any past year,
     // not just the current one.
-    const ytdStart = new Date(selectedYear, 0, 1).toISOString();       // Jan 1
-    const ytdEnd   = new Date(selectedYear, 11, 31, 23, 59, 59, 999).toISOString(); // Dec 31
+    const ytdStart = new Date(Date.UTC(selectedYear, 0, 1)).toISOString();        // Jan 1 UTC
+    const ytdEnd   = new Date(Date.UTC(selectedYear, 11, 31, 23, 59, 59, 999)).toISOString(); // Dec 31 UTC
 
     // Trend: always show last 12 months from today regardless of selected year
     const now = new Date();
@@ -70,14 +73,19 @@ export default function ClientDashboard() {
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd),
       // Sales YTD
-      supabase.from('sales').select('total_gross, gross_revenue')
+      supabase.from('sales').select('sale_price')
         .eq('organization_id', orgId)
         .gte('sale_date', ytdStart)
         .lte('sale_date', ytdEnd),
-      // Vendor costs (monthly × 12 for annual cost)
-      supabase.from('vendors').select('monthly_cost').eq('organization_id', orgId).eq('is_active', true),
+      // Vendor costs — fetch id + monthly_cost so we can look up first lead date per vendor
+      supabase.from('vendors').select('id, monthly_cost').eq('organization_id', orgId).eq('is_active', true),
+      // First lead date per vendor — used to calculate months active
+      supabase.from('leads').select('vendor_id, lead_date')
+        .eq('organization_id', orgId)
+        .not('vendor_id', 'is', null)
+        .order('lead_date', { ascending: true }),
       // Revenue trend (last 12 months, always current)
-      supabase.from('sales').select('sale_date, total_gross, gross_revenue')
+      supabase.from('sales').select('sale_date, sale_price')
         .eq('organization_id', orgId)
         .gte('sale_date', trendStart),
       // Leads export (YTD for selected year)
@@ -86,40 +94,73 @@ export default function ClientDashboard() {
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd)
         .limit(5000),
-    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, trendRes, leadsExportRes]) => {
+    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendRes, leadsExportRes]) => {
       setOrg(orgRes.data ?? null);
       const revenue = (salesRes.data ?? []).reduce(
-        (a, s) => a + Number(s.total_gross ?? s.gross_revenue ?? 0), 0,
+        (a, s) => a + Number(s.sale_price ?? 0), 0,
       );
-      // WHY: Annual cost = monthly_cost × 12 so ROI comparison is apples-to-apples
-      // against full-year revenue. For past years we still use the current monthly
-      // cost × 12 as a proxy (historical cost data isn't stored per-month).
-      const annualCost = (vendorsRes.data ?? []).reduce(
-        (a, v) => a + Number(v.monthly_cost ?? 0), 0,
-      ) * 12;
-      setStats({
-        leads: leadsRes.count ?? 0,
-        sales: salesRes.data?.length ?? 0,
-        revenue,
-        annualCost,
-      });
+
+      // Build a map of vendor_id → earliest lead_date
+      const firstLeadByVendor: Record<string, string> = {};
+      for (const l of allLeadsRes.data ?? []) {
+        if (l.vendor_id && l.lead_date && !firstLeadByVendor[l.vendor_id]) {
+          firstLeadByVendor[l.vendor_id] = l.lead_date;
+        }
+      }
+
+      // Build VendorCost array with firstLeadDate attached
+      const costs: VendorCost[] = (vendorsRes.data ?? []).map((v: any) => ({
+        id: v.id,
+        monthly_cost: v.monthly_cost,
+        firstLeadDate: firstLeadByVendor[v.id] ?? null,
+      }));
+
+      setVendorCosts(costs);
+      setStats({ leads: leadsRes.count ?? 0, sales: salesRes.data?.length ?? 0, revenue });
       setTrendSales((trendRes.data ?? []) as SaleLite[]);
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
   }, [activeOrgId, selectedYear]);
 
-  // WHY: For the current year, pro-rate the annual cost to YTD elapsed days
-  // so the ROI % reflects only the cost incurred so far this year.
-  // For past years, use the full annual cost since the year is complete.
+  // WHY: Cost is calculated per vendor based on when they first sent a lead.
+  // months_active = months from first lead date to end of selected period.
+  // This avoids over-counting cost for vendors that started mid-year.
   const ytdCost = useMemo(() => {
-    if (selectedYear < currentYear) return stats.annualCost;
-    const now = new Date();
-    const startOfYear = new Date(selectedYear, 0, 1);
-    const dayOfYear = Math.ceil((now.getTime() - startOfYear.getTime()) / (1000 * 60 * 60 * 24));
-    const daysInYear = selectedYear % 4 === 0 ? 366 : 365;
-    return stats.annualCost * (dayOfYear / daysInYear);
-  }, [stats.annualCost, selectedYear]);
+    if (vendorCosts.length === 0) return 0;
+
+    // End of the selected period — Dec 31 for past years, today for current year
+    const periodEnd = selectedYear < currentYear
+      ? new Date(selectedYear, 11, 31, 23, 59, 59)
+      : new Date();
+
+    // Start of the selected year
+    const yearStart = new Date(selectedYear, 0, 1);
+
+    return vendorCosts.reduce((total, v) => {
+      const monthlyCost = Number(v.monthly_cost ?? 0);
+      if (monthlyCost === 0) return total;
+
+      // No leads yet — can't determine start date, exclude from cost
+      if (!v.firstLeadDate) return total;
+
+      const firstLead = new Date(v.firstLeadDate);
+
+      // Vendor's first lead is after the selected period — not active this period
+      if (firstLead > periodEnd) return total;
+
+      // Vendor start for this period = later of (first lead date, Jan 1 of selected year)
+      const vendorStart = firstLead < yearStart ? yearStart : firstLead;
+
+      // Months active = difference in months between vendorStart and periodEnd
+      // Using ceil so a partial month counts as a full month
+      const monthsActive = Math.ceil(
+        (periodEnd.getTime() - vendorStart.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+      );
+
+      return total + monthlyCost * Math.max(monthsActive, 1);
+    }, 0);
+  }, [vendorCosts, selectedYear]);
 
   const trend = useMemo(() => {
     const buckets: Record<string, number> = {};
@@ -132,7 +173,7 @@ export default function ClientDashboard() {
       if (!s.sale_date) continue;
       const d = new Date(s.sale_date);
       const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.total_gross ?? s.gross_revenue ?? 0);
+      if (key in buckets) buckets[key] += Number(s.sale_price ?? 0);
     }
     return Object.entries(buckets).map(([month, revenue]) => ({
       month: month.slice(5) + '/' + month.slice(2, 4),
