@@ -165,7 +165,7 @@ export default function LeadsPage() {
       if (search.trim()) {
         const s = search.trim();
         q = q.or(
-          `customer_full_name.ilike.%${s}%,customer_first_name.ilike.%${s}%,customer_last_name.ilike.%${s}%,customer_email.ilike.%${s}%,customer_phone.ilike.%${s}%,vehicle_of_interest.ilike.%${s}%,stock_number.ilike.%${s}%,source_label.ilike.%${s}%`
+          `customer_full_name.ilike.%${s}%,customer_first_name.ilike.%${s}%,customer_last_name.ilike.%${s}%,customer_email.ilike.%${s}%,customer_phone.ilike.%${s}%,vehicle_of_interest.ilike.%${s}%,stock_number.ilike.%${s}%,source_label.ilike.%${s}%,type_of_leads.ilike.%${s}%,type_of_vehicle.ilike.%${s}%`
         );
       }
       return q;
