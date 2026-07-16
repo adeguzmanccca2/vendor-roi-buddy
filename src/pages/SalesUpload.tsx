@@ -14,6 +14,7 @@ import { Upload as UploadIcon, FileSpreadsheet, AlertTriangle, ChevronDown, Chev
 import { toast } from 'sonner';
 import {
   guessColumn,
+  normalizeEmail,
   normalizePhone,
   normalizeRevenue,
   parseLeadDate,
