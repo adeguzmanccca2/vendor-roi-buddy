@@ -34,6 +34,7 @@ const FIELDS = [
   { key: 'zip_code',     label: 'Zip code',      candidates: ['zip', 'zip code', 'postal', 'postal code'] },
   { key: 'phone',        label: 'Cell phone',    candidates: ['cell phone', 'cell', 'mobile', 'mobile phone', 'phone', 'phone number', 'tel'] },
   { key: 'work_phone',   label: 'Work phone',    candidates: ['work phone', 'work', 'office phone'] },
+  { key: 'email',        label: 'Email',         candidates: ['email', 'e-mail', 'email address', 'customer email'] },
   { key: 'stock_number', label: 'Stock #',       candidates: ['stock', 'stock number', 'stock#', 'stock #'] },
   { key: 'vin',          label: 'VIN',           candidates: ['vin', 'vehicle vin', 'vin #', 'vin number'] },
   { key: 'vehicle',      label: 'Vehicle',       candidates: ['vehicle', 'sold vehicle', 'unit', 'description'] },
@@ -240,6 +241,8 @@ export default function SalesUploadPage() {
 
           // Parse remaining fields
           const normPhone = normalizePhone(phone) ?? normalizePhone(get(row, 'work_phone'));
+          const email     = get(row, 'email');
+          const normEmail = normalizeEmail(email) ?? null;
           const veh       = get(row, 'vehicle');
           const parsed    = parseVehicle(veh);
           const { first, last } = splitName(fullName);
@@ -254,8 +257,10 @@ export default function SalesUploadPage() {
             customer_last_name:  last     || null,
             customer_full_name:  fullName || null,
             customer_phone:      phone    || null,
+            customer_email:      email    || null,
             work_phone:          get(row, 'work_phone') || null,
             normalized_phone:    normPhone,
+            normalized_email:    normEmail,
             address:             get(row, 'address')      || null,
             city:                get(row, 'city')         || null,
             state:               get(row, 'state')        || null,
