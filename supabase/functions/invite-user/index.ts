@@ -1,6 +1,7 @@
-// Admin-only: create an invitation row + send an invite email via Brevo.
+// Admin-only: create an invitation row + send an invite email through a configured provider.
 // The email links to our app where /accept-invite?token=... finalizes role + dealership memberships.
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.45.0';
+import { resolveInviteEmailProvider } from '../../../src/lib/inviteEmail.ts';
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -65,6 +66,39 @@ async function sendBrevoEmail(
   }
 }
 
+async function sendSupabaseAuthEmail(
+  client: ReturnType<typeof createClient>,
+  to: string,
+  acceptUrl: string,
+  invitationId: string,
+  invitationToken: string,
+): Promise<{ sent: boolean; error: string | null }> {
+  try {
+    const authAdmin = (client.auth as { admin?: { inviteUserByEmail?: (email: string, options: { redirectTo: string; data?: Record<string, unknown> }) => Promise<{ error: { message: string } | null }> } }).admin;
+    const inviteUserByEmail = authAdmin?.inviteUserByEmail;
+
+    if (typeof inviteUserByEmail !== 'function') {
+      return { sent: false, error: 'Supabase auth invite helper is unavailable' };
+    }
+
+    const { error } = await inviteUserByEmail(to, {
+      redirectTo: acceptUrl,
+      data: {
+        invitation_id: invitationId,
+        invitation_token: invitationToken,
+      },
+    });
+
+    if (error) {
+      return { sent: false, error: `Supabase auth error: ${error.message}` };
+    }
+
+    return { sent: true, error: null };
+  } catch (e) {
+    return { sent: false, error: `Supabase auth error: ${(e as Error).message}` };
+  }
+}
+
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders });
 
@@ -124,17 +158,22 @@ Deno.serve(async (req) => {
     }
 
     const acceptUrl = `${origin}/accept-invite?token=${inv.token}`;
+    const provider = resolveInviteEmailProvider({ BREVO_API_KEY, SUPABASE_SERVICE_ROLE_KEY: SERVICE });
 
-    // Send invite email via Brevo
+    // Send invite email using the best available provider.
     let emailSent = false;
     let emailError: string | null = null;
 
-    if (!BREVO_API_KEY) {
-      emailError = 'BREVO_API_KEY secret is not set';
-    } else {
-      const result = await sendBrevoEmail(BREVO_API_KEY, email, acceptUrl);
+    if (provider === 'brevo') {
+      const result = await sendBrevoEmail(BREVO_API_KEY!, email, acceptUrl);
       emailSent = result.sent;
       emailError = result.error;
+    } else if (provider === 'supabase-auth') {
+      const result = await sendSupabaseAuthEmail(admin, email, acceptUrl, inv.id, inv.token);
+      emailSent = result.sent;
+      emailError = result.error;
+    } else {
+      emailError = 'No email delivery provider is configured';
     }
 
     return json({

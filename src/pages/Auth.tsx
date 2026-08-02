@@ -9,6 +9,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
 import { toast } from 'sonner';
+import { getSupabaseErrorMessage } from '@/lib/supabaseError';
 
 const emailSchema = z.string().trim().email({ message: 'Invalid email' }).max(255);
 const passwordSchema = z.string().min(8, { message: 'Password must be at least 8 characters' }).max(72);
@@ -51,7 +52,7 @@ export default function AuthPage() {
     });
     setBusy(false);
     if (error) {
-      toast.error(error.message === 'Invalid login credentials' ? 'Invalid email or password' : error.message);
+      toast.error(error.message === 'Invalid login credentials' ? 'Invalid email or password' : getSupabaseErrorMessage(error));
       return;
     }
     toast.success('Signed in');
@@ -96,7 +97,7 @@ export default function AuthPage() {
     });
     setBusy(false);
     if (error) {
-      toast.error(error.message.includes('already registered') ? 'Email already registered' : error.message);
+      toast.error(error.message.includes('already registered') ? 'Email already registered' : getSupabaseErrorMessage(error));
       return;
     }
     toast.success('Check your email to verify your account before signing in.');

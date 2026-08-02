@@ -8,12 +8,15 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, Info, DollarSign, ShoppingCart, ListChecks, TrendingUp, Download } from 'lucide-react';
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
 } from 'recharts';
 import { downloadCsv } from '@/lib/exportCsv';
+import { buildVendorComparisonData } from '@/lib/dashboardCharts';
 
 interface Org { id: string; name: string; slug: string; status: string }
-interface SaleLite { sale_date: string | null; sale_price: number | null }
+interface SaleLite { sale_date: string | null; sale_price: number | null; vendor_id: string | null; lead_id: string | null }
+interface LeadLite { lead_date: string | null; vendor_id: string | null }
+interface VendorLite { id: string; name: string; monthly_cost: number | null }
 interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null }
 
 const fmtMoney = (n: number) =>
@@ -31,6 +34,8 @@ export default function ClientDashboard() {
   const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0 });
   const [vendorCosts, setVendorCosts] = useState<VendorCost[]>([]);
   const [trendSales, setTrendSales] = useState<SaleLite[]>([]);
+  const [trendLeads, setTrendLeads] = useState<LeadLite[]>([]);
+  const [vendors, setVendors] = useState<VendorLite[]>([]);
   const [exportRows, setExportRows] = useState<Record<string, any>[]>([]);
 
   // WHY: selectedYear drives all YTD queries. Defaults to current year.
@@ -78,23 +83,27 @@ export default function ClientDashboard() {
         .gte('sale_date', ytdStart)
         .lte('sale_date', ytdEnd),
       // Vendor costs — fetch id + monthly_cost so we can look up first lead date per vendor
-      supabase.from('vendors').select('id, monthly_cost').eq('organization_id', orgId).eq('is_active', true),
+      supabase.from('vendors').select('id, name, monthly_cost').eq('organization_id', orgId).eq('is_active', true),
       // First lead date per vendor — used to calculate months active
       supabase.from('leads').select('vendor_id, lead_date')
         .eq('organization_id', orgId)
         .not('vendor_id', 'is', null)
         .order('lead_date', { ascending: true }),
       // Revenue trend (last 12 months, always current)
-      supabase.from('sales').select('sale_date, sale_price')
+      supabase.from('sales').select('sale_date, sale_price, vendor_id, lead_id')
         .eq('organization_id', orgId)
         .gte('sale_date', trendStart),
+      // Lead counts for comparison (last 12 months)
+      supabase.from('leads').select('lead_date, vendor_id')
+        .eq('organization_id', orgId)
+        .gte('lead_date', trendStart),
       // Leads export (YTD for selected year)
       supabase.from('leads').select('customer_full_name, customer_email, customer_phone, vehicle_of_interest, lead_date, lead_status, vendor_id')
         .eq('organization_id', orgId)
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd)
         .limit(5000),
-    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendRes, leadsExportRes]) => {
+    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes]) => {
       setOrg(orgRes.data ?? null);
       const revenue = (salesRes.data ?? []).reduce(
         (a, s) => a + Number(s.sale_price ?? 0), 0,
@@ -108,7 +117,6 @@ export default function ClientDashboard() {
         }
       }
 
-      // Build VendorCost array with firstLeadDate attached
       const costs: VendorCost[] = (vendorsRes.data ?? []).map((v: any) => ({
         id: v.id,
         monthly_cost: v.monthly_cost,
@@ -117,7 +125,9 @@ export default function ClientDashboard() {
 
       setVendorCosts(costs);
       setStats({ leads: leadsRes.count ?? 0, sales: salesRes.data?.length ?? 0, revenue });
-      setTrendSales((trendRes.data ?? []) as SaleLite[]);
+      setTrendSales((trendSalesRes.data ?? []) as SaleLite[]);
+      setTrendLeads((trendLeadsRes.data ?? []) as LeadLite[]);
+      setVendors((vendorsRes.data ?? []) as VendorLite[]);
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
@@ -180,6 +190,13 @@ export default function ClientDashboard() {
       revenue,
     }));
   }, [trendSales]);
+
+  const comparison = useMemo(() => buildVendorComparisonData({
+    leads: trendLeads,
+    sales: trendSales,
+    vendors,
+    months: 12,
+  }), [trendLeads, trendSales, vendors]);
 
   const exportLeads = () =>
     downloadCsv(`leads-ytd-${selectedYear}-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
@@ -265,6 +282,38 @@ export default function ClientDashboard() {
                 contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
               />
               <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Vendor lead comparison — last 12 months</CardTitle>
+        </CardHeader>
+        <CardContent className="h-80">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={comparison.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip
+                formatter={(value: any, name: any) => [value, name === 'attributedSales' ? 'Attributed sales' : name]}
+                contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+              />
+              <Legend />
+              {comparison.series.map(series => (
+                <Line
+                  key={series.key}
+                  type="monotone"
+                  dataKey={series.key}
+                  name={series.label}
+                  stroke={series.color}
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
+                />
+              ))}
             </LineChart>
           </ResponsiveContainer>
         </CardContent>

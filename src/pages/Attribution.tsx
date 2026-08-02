@@ -369,7 +369,7 @@ export default function AttributionPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Attribution & ROI</h1>
+          <h1 className="text-2xl font-bold text-foreground">Lead Comparison</h1>
           <p className="text-sm text-muted-foreground">
             {activeOrg?.name} — vendor performance over the selected window.
           </p>
