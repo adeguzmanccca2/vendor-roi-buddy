@@ -21,8 +21,10 @@ import {
   LineChart, Line, Cell,
 } from 'recharts';
 import { AttributionOverrideDialog } from '@/components/AttributionOverrideDialog';
+import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
+import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Vendor { id: string; name: string; monthly_cost: number | null }
 interface SaleRow {
@@ -145,6 +147,7 @@ export default function AttributionPage() {
   const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
   const [vendorLeadsView, setVendorLeadsView] = useState<{ id: string | null; name: string } | null>(null);
   const [leads, setLeads] = useState<LeadRow[]>([]);
+  const [manualLeadCounts, setManualLeadCounts] = useState<Record<string, ManualLeadCountBreakdown>>({});
 
   const load = async () => {
     if (!activeOrgId) return;
@@ -202,6 +205,23 @@ export default function AttributionPage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeOrgId, period]);
 
+  useEffect(() => {
+    if (!activeOrgId) return;
+    const saved = window.localStorage.getItem(`attribution-manual-leads-${activeOrgId}`);
+    if (!saved) return;
+    try {
+      const parsed = JSON.parse(saved) as Record<string, ManualLeadCountBreakdown>;
+      setManualLeadCounts(parsed);
+    } catch {
+      window.localStorage.removeItem(`attribution-manual-leads-${activeOrgId}`);
+    }
+  }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    window.localStorage.setItem(`attribution-manual-leads-${activeOrgId}`, JSON.stringify(manualLeadCounts));
+  }, [activeOrgId, manualLeadCounts]);
+
   const months = periodMonths(period);
 
   const perf: VendorPerf[] = useMemo(() => {
@@ -238,7 +258,11 @@ export default function AttributionPage() {
 
     const rows: VendorPerf[] = vendors.map(v => {
       const agg = byVendor.get(v.id) ?? { revenue: 0, sales: 0 };
-      const leads = leadCounts[v.id] ?? 0;
+      const leads = resolveLeadCount({
+        vendorId: v.id,
+        manualLeadCounts,
+        fallbackLeadCount: leadCounts[v.id] ?? 0,
+      });
       const cost = Number(v.monthly_cost ?? 0) * months;
       const cpl = leads > 0 ? cost / leads : 0;
       const cpa = agg.sales > 0 ? cost / agg.sales : 0;
@@ -263,7 +287,7 @@ export default function AttributionPage() {
       });
     }
     return rows.sort((a, b) => b.revenue - a.revenue);
-  }, [vendors, sales, leads, leadCounts, unattributedLeads, months]);
+  }, [vendors, sales, leads, leadCounts, unattributedLeads, months, manualLeadCounts]);
 
   const totals = useMemo(() => {
     const revenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
@@ -304,6 +328,17 @@ export default function AttributionPage() {
       roi: Math.round(p.roi * 100),
       category: p.category,
     })), [perf]);
+
+  const updateManualLeadCount = (vendorId: string, field: keyof ManualLeadCountBreakdown, value: string) => {
+    const parsed = Number(value);
+    setManualLeadCounts(prev => ({
+      ...prev,
+      [vendorId]: {
+        parts: field === 'parts' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.parts ?? 0,
+        service: field === 'service' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.service ?? 0,
+      },
+    }));
+  };
 
   const exportVendorRoi = () => {
     const rows = perf.map(p => ({
@@ -432,6 +467,44 @@ export default function AttributionPage() {
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader><CardTitle className="text-base">Manual lead counts (parts / service)</CardTitle></CardHeader>
+        <CardContent>
+          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {vendors.map(vendor => {
+              const values = manualLeadCounts[vendor.id] ?? { parts: 0, service: 0 };
+              return (
+                <div key={vendor.id} className="rounded-lg border bg-background/50 p-3">
+                  <p className="text-sm font-medium">{vendor.name}</p>
+                  <div className="mt-3 grid grid-cols-2 gap-2">
+                    <label className="space-y-1 text-xs text-muted-foreground">
+                      <span>Parts</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        inputMode="numeric"
+                        value={values.parts}
+                        onChange={e => updateManualLeadCount(vendor.id, 'parts', e.target.value)}
+                      />
+                    </label>
+                    <label className="space-y-1 text-xs text-muted-foreground">
+                      <span>Service</span>
+                      <Input
+                        type="number"
+                        min="0"
+                        inputMode="numeric"
+                        value={values.service}
+                        onChange={e => updateManualLeadCount(vendor.id, 'service', e.target.value)}
+                      />
+                    </label>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Vendor performance</CardTitle></CardHeader>

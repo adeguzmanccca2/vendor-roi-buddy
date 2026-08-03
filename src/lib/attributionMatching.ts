@@ -127,6 +127,7 @@ export function getMatchingVendorIds({
     for (const vendorId of resolvedEmailToVendors.get(emailKey) ?? []) {
       matches.add(vendorId);
     }
+    return Array.from(matches);
   }
 
   const phone = sale.normalized_phone ?? sale.customer_phone ?? '';
@@ -135,6 +136,7 @@ export function getMatchingVendorIds({
     for (const vendorId of resolvedPhoneToVendors.get(phoneKey) ?? []) {
       matches.add(vendorId);
     }
+    return Array.from(matches);
   }
 
   return Array.from(matches);

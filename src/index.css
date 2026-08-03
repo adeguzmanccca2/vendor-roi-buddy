@@ -52,6 +52,16 @@ All colors MUST be HSL.
     --sidebar-accent-foreground: 220 14% 92%;
     --sidebar-border: 220 20% 22%;
     --sidebar-ring: 215 80% 48%;
+
+    /* Categorical chart series — fixed hue order, validated for CVD-safe adjacency (see dataviz skill) */
+    --chart-1: 213 68% 50%;
+    --chart-2: 17 82% 56%;
+    --chart-3: 159 73% 40%;
+    --chart-4: 41 100% 46%;
+    --chart-5: 337 70% 70%;
+    --chart-6: 120 100% 26%;
+    --chart-7: 249 48% 44%;
+    --chart-8: 0 73% 59%;
   }
 
   .dark {
@@ -90,6 +100,16 @@ All colors MUST be HSL.
     --sidebar-accent-foreground: 240 4.8% 95.9%;
     --sidebar-border: 240 3.7% 15.9%;
     --sidebar-ring: 217.2 91.2% 59.8%;
+
+    /* Categorical chart series — same 8 hues, stepped for the dark surface */
+    --chart-1: 213 77% 56%;
+    --chart-2: 17 70% 50%;
+    --chart-3: 159 73% 36%;
+    --chart-4: 40 100% 39%;
+    --chart-5: 338 61% 58%;
+    --chart-6: 120 100% 26%;
+    --chart-7: 247 69% 72%;
+    --chart-8: 0 72% 65%;
   }
 }
 

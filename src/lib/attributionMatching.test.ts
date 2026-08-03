@@ -33,4 +33,34 @@ describe('getMatchingVendorIds', () => {
 
     expect(getMatchingVendorIds({ sale, knownVendorIds, leads })).toEqual(['vendor-1']);
   });
+
+  it('prefers an email match over a phone match instead of unioning both vendors', () => {
+    const knownVendorIds = new Set(['vendor-1', 'vendor-2']);
+    const leads = [
+      { vendor_id: 'vendor-1', customer_email: 'buyer@example.com' },
+      { vendor_id: 'vendor-2', customer_phone: '555-123-4567' },
+    ];
+
+    const sale = {
+      normalized_email: 'buyer@example.com',
+      normalized_phone: '5551234567',
+    };
+
+    expect(getMatchingVendorIds({ sale, knownVendorIds, leads })).toEqual(['vendor-1']);
+  });
+
+  it('falls back to phone when there is no email match', () => {
+    const knownVendorIds = new Set(['vendor-1', 'vendor-2']);
+    const leads = [
+      { vendor_id: 'vendor-1', customer_email: 'someone-else@example.com' },
+      { vendor_id: 'vendor-2', customer_phone: '555-123-4567' },
+    ];
+
+    const sale = {
+      normalized_email: 'buyer@example.com',
+      normalized_phone: '5551234567',
+    };
+
+    expect(getMatchingVendorIds({ sale, knownVendorIds, leads })).toEqual(['vendor-2']);
+  });
 });

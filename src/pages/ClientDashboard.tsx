@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorComparisonData } from '@/lib/dashboardCharts';
+import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Org { id: string; name: string; slug: string; status: string }
 interface SaleLite { sale_date: string | null; sale_price: number | null; vendor_id: string | null; lead_id: string | null }
@@ -37,11 +38,32 @@ export default function ClientDashboard() {
   const [trendLeads, setTrendLeads] = useState<LeadLite[]>([]);
   const [vendors, setVendors] = useState<VendorLite[]>([]);
   const [exportRows, setExportRows] = useState<Record<string, any>[]>([]);
+  const [manualLeadCounts, setManualLeadCounts] = useState<Record<string, ManualLeadCountBreakdown>>({});
 
   // WHY: selectedYear drives all YTD queries. Defaults to current year.
   // When the user picks a different year, the useEffect re-fires and
   // re-fetches all stats for that year's Jan 1 → Dec 31 window.
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+
+  useEffect(() => {
+    if (!activeOrgId) {
+      setManualLeadCounts({});
+      setLoading(false);
+      return;
+    }
+
+    const savedManualCounts = window.localStorage.getItem(`attribution-manual-leads-${activeOrgId}`);
+    if (savedManualCounts) {
+      try {
+        setManualLeadCounts(JSON.parse(savedManualCounts) as Record<string, ManualLeadCountBreakdown>);
+      } catch {
+        window.localStorage.removeItem(`attribution-manual-leads-${activeOrgId}`);
+        setManualLeadCounts({});
+      }
+    } else {
+      setManualLeadCounts({});
+    }
+  }, [activeOrgId]);
 
   useEffect(() => {
     if (!activeOrgId) {
@@ -123,15 +145,28 @@ export default function ClientDashboard() {
         firstLeadDate: firstLeadByVendor[v.id] ?? null,
       }));
 
+      const vendorIds = (vendorsRes.data ?? []).map((v: any) => v.id);
+      const fallbackCountsByVendor: Record<string, number> = {};
+      for (const lead of (leadsExportRes.data ?? []) as Array<{ vendor_id: string | null }>) {
+        if (!lead.vendor_id) continue;
+        fallbackCountsByVendor[lead.vendor_id] = (fallbackCountsByVendor[lead.vendor_id] ?? 0) + 1;
+      }
+      const leadCount = resolveLeadTotal({
+        manualLeadCounts,
+        vendorIds,
+        fallbackCountsByVendor,
+        fallbackUnassignedCount: (leadsExportRes.data ?? []).filter((lead: any) => !lead.vendor_id).length,
+      });
+
       setVendorCosts(costs);
-      setStats({ leads: leadsRes.count ?? 0, sales: salesRes.data?.length ?? 0, revenue });
+      setStats({ leads: leadCount, sales: salesRes.data?.length ?? 0, revenue });
       setTrendSales((trendSalesRes.data ?? []) as SaleLite[]);
       setTrendLeads((trendLeadsRes.data ?? []) as LeadLite[]);
       setVendors((vendorsRes.data ?? []) as VendorLite[]);
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
-  }, [activeOrgId, selectedYear]);
+  }, [activeOrgId, manualLeadCounts, selectedYear]);
 
   // WHY: Cost is calculated per vendor based on when they first sent a lead.
   // months_active = months from first lead date to end of selected period.
@@ -290,6 +325,9 @@ export default function ClientDashboard() {
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Vendor attribution — last 12 months</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            One line per vendor (leads by month) plus total attributed sales.
+          </p>
         </CardHeader>
         <CardContent className="h-80">
           <ResponsiveContainer width="100%" height="100%">
