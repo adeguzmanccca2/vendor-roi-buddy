@@ -25,6 +25,7 @@ import {
   parseVehicle,
   buildDedupHash,
 } from '@/lib/normalize';
+import { type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Vendor { id: string; name: string; is_active: boolean }
 interface Lead {
@@ -131,6 +132,8 @@ export default function LeadsPage() {
   const [saleSearching, setSaleSearching]   = useState(false);
   const [linking, setLinking]               = useState(false);
 
+  const [manualLeadCounts, setManualLeadCounts] = useState<Record<string, ManualLeadCountBreakdown>>({});
+
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
     else { setSortKey(k); setSortDir('asc'); }
@@ -194,6 +197,37 @@ export default function LeadsPage() {
   }, [activeOrgId]);
 
   useEffect(() => { load(); }, [load]);
+
+  // WHY: Manual lead counts (parts/service) live in localStorage keyed by org,
+  // shared with the Attribution and dashboard pages which read (but no longer
+  // edit) this same key to fold parts/service leads into ROI/CPL calculations.
+  useEffect(() => {
+    if (!activeOrgId) { setManualLeadCounts({}); return; }
+    const saved = window.localStorage.getItem(`attribution-manual-leads-${activeOrgId}`);
+    if (!saved) { setManualLeadCounts({}); return; }
+    try {
+      setManualLeadCounts(JSON.parse(saved) as Record<string, ManualLeadCountBreakdown>);
+    } catch {
+      window.localStorage.removeItem(`attribution-manual-leads-${activeOrgId}`);
+      setManualLeadCounts({});
+    }
+  }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    window.localStorage.setItem(`attribution-manual-leads-${activeOrgId}`, JSON.stringify(manualLeadCounts));
+  }, [activeOrgId, manualLeadCounts]);
+
+  const updateManualLeadCount = (vendorId: string, field: keyof ManualLeadCountBreakdown, value: string) => {
+    const parsed = Number(value);
+    setManualLeadCounts(prev => ({
+      ...prev,
+      [vendorId]: {
+        parts: field === 'parts' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.parts ?? 0,
+        service: field === 'service' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.service ?? 0,
+      },
+    }));
+  };
 
   const applySearch = (val: string) => { setSearch(val); setPage(0); };
   const applyVin = (val: string) => { setVinSearch(val); setPage(0); };
@@ -506,6 +540,10 @@ export default function LeadsPage() {
           </Dialog>
         </div>
       </div>
+
+      {/* Manual lead counts (parts/service) card hidden for now — behavior is
+          still under review. State/effects below are left in place so any
+          previously-saved counts keep feeding Attribution's calculations. */}
 
       <Card className="overflow-x-hidden">
         <CardHeader>

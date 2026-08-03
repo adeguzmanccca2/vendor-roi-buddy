@@ -13,11 +13,11 @@ export function resolveLeadCount({
   fallbackLeadCount: number;
 }) {
   const manual = manualLeadCounts[vendorId];
-  if (manual) {
-    return Number(manual.parts ?? 0) + Number(manual.service ?? 0);
-  }
+  const manualTotal = manual ? Number(manual.parts ?? 0) + Number(manual.service ?? 0) : 0;
 
-  return Number(fallbackLeadCount ?? 0);
+  // Manual parts/service leads (walk-ins, phone-ups, etc.) aren't in the
+  // imported leads table — they're additional to it, not a replacement.
+  return Number(fallbackLeadCount ?? 0) + manualTotal;
 }
 
 export function resolveLeadTotal({

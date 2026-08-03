@@ -18,12 +18,12 @@ import {
 import { toast } from 'sonner';
 import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
-  LineChart, Line, Cell,
+  LineChart, Line, Cell, Legend,
 } from 'recharts';
 import { AttributionOverrideDialog } from '@/components/AttributionOverrideDialog';
-import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
+import { buildVendorRoiTrend } from '@/lib/dashboardCharts';
 import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Vendor { id: string; name: string; monthly_cost: number | null }
@@ -140,6 +140,8 @@ export default function AttributionPage() {
   const [unattributedLeads, setUnattributedLeads] = useState<number>(0);
   const [sales, setSales] = useState<SaleRow[]>([]);
   const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null }[]>([]);
+  const [trendSalesFull, setTrendSalesFull] = useState<SaleRow[]>([]);
+  const [trendLeads, setTrendLeads] = useState<LeadRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
@@ -177,7 +179,22 @@ export default function AttributionPage() {
         .eq('organization_id', activeOrgId)
         .gte('sale_date', trendSinceIso);
 
-      const [{ data: vData, error: vErr }, { data: lData, error: lErr }, { data: sData, error: sErr }, { data: tData }] = await Promise.all([vQ, lQ, sQ, tQ]);
+      const tSQ = supabase.from('sales').select('id, vendor_id, lead_id, customer_full_name, customer_email, customer_phone, normalized_email, normalized_phone, organization_id, sale_date, sale_price, attribution_status, attribution_confidence, manual_override, vehicle_year, vehicle_make, vehicle_model, stock_number, deal_number, vin')
+        .eq('organization_id', activeOrgId)
+        .gte('sale_date', trendSinceIso);
+
+      const tLQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, stock_number, source_label, lead_status')
+        .eq('organization_id', activeOrgId)
+        .gte('lead_date', trendSinceIso);
+
+      const [
+        { data: vData, error: vErr },
+        { data: lData, error: lErr },
+        { data: sData, error: sErr },
+        { data: tData },
+        { data: tSData },
+        { data: tLData },
+      ] = await Promise.all([vQ, lQ, sQ, tQ, tSQ, tLQ]);
 
       if (vErr) toast.error('Failed to load vendors: ' + vErr.message);
       if (lErr) toast.error('Failed to load leads: ' + lErr.message);
@@ -196,6 +213,8 @@ export default function AttributionPage() {
       setUnattributedLeads(unassigned);
       setSales((sData ?? []) as SaleRow[]);
       setTrendSales((tData ?? []) as any);
+      setTrendSalesFull((tSData ?? []) as SaleRow[]);
+      setTrendLeads((tLData ?? []) as LeadRow[]);
     } catch (e: any) {
       toast.error('Failed to load attribution data: ' + (e.message ?? 'Unknown error'));
     } finally {
@@ -205,6 +224,8 @@ export default function AttributionPage() {
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeOrgId, period]);
 
+  // Manual lead counts (parts/service) are edited on the Leads page; this page
+  // only reads them, keyed by org, to fold into lead/CPL calculations below.
   useEffect(() => {
     if (!activeOrgId) return;
     const saved = window.localStorage.getItem(`attribution-manual-leads-${activeOrgId}`);
@@ -216,11 +237,6 @@ export default function AttributionPage() {
       window.localStorage.removeItem(`attribution-manual-leads-${activeOrgId}`);
     }
   }, [activeOrgId]);
-
-  useEffect(() => {
-    if (!activeOrgId) return;
-    window.localStorage.setItem(`attribution-manual-leads-${activeOrgId}`, JSON.stringify(manualLeadCounts));
-  }, [activeOrgId, manualLeadCounts]);
 
   const months = periodMonths(period);
 
@@ -329,16 +345,12 @@ export default function AttributionPage() {
       category: p.category,
     })), [perf]);
 
-  const updateManualLeadCount = (vendorId: string, field: keyof ManualLeadCountBreakdown, value: string) => {
-    const parsed = Number(value);
-    setManualLeadCounts(prev => ({
-      ...prev,
-      [vendorId]: {
-        parts: field === 'parts' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.parts ?? 0,
-        service: field === 'service' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.service ?? 0,
-      },
-    }));
-  };
+  const roiTrend = useMemo(() => buildVendorRoiTrend({
+    leads: trendLeads,
+    sales: trendSalesFull,
+    vendors,
+    months: 12,
+  }), [trendLeads, trendSalesFull, vendors]);
 
   const exportVendorRoi = () => {
     const rows = perf.map(p => ({
@@ -469,40 +481,41 @@ export default function AttributionPage() {
       </div>
 
       <Card>
-        <CardHeader><CardTitle className="text-base">Manual lead counts (parts / service)</CardTitle></CardHeader>
-        <CardContent>
-          <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
-            {vendors.map(vendor => {
-              const values = manualLeadCounts[vendor.id] ?? { parts: 0, service: 0 };
-              return (
-                <div key={vendor.id} className="rounded-lg border bg-background/50 p-3">
-                  <p className="text-sm font-medium">{vendor.name}</p>
-                  <div className="mt-3 grid grid-cols-2 gap-2">
-                    <label className="space-y-1 text-xs text-muted-foreground">
-                      <span>Parts</span>
-                      <Input
-                        type="number"
-                        min="0"
-                        inputMode="numeric"
-                        value={values.parts}
-                        onChange={e => updateManualLeadCount(vendor.id, 'parts', e.target.value)}
-                      />
-                    </label>
-                    <label className="space-y-1 text-xs text-muted-foreground">
-                      <span>Service</span>
-                      <Input
-                        type="number"
-                        min="0"
-                        inputMode="numeric"
-                        value={values.service}
-                        onChange={e => updateManualLeadCount(vendor.id, 'service', e.target.value)}
-                      />
-                    </label>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
+        <CardHeader>
+          <CardTitle className="text-base">ROI trend by vendor — last 12 months</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Monthly ROI per vendor with cost data — shows whether a vendor is trending up or down, not just where it sits this period.
+          </p>
+        </CardHeader>
+        <CardContent className="h-80">
+          {roiTrend.series.length === 0 ? (
+            <p className="text-sm text-muted-foreground">No vendors with cost data yet.</p>
+          ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={roiTrend.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} />
+                <Tooltip
+                  formatter={(value: number | string, name: string) => [`${value}%`, name]}
+                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+                />
+                <Legend />
+                {roiTrend.series.map(series => (
+                  <Line
+                    key={series.key}
+                    type="monotone"
+                    dataKey={series.key}
+                    name={series.label}
+                    stroke={series.color}
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 4 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          )}
         </CardContent>
       </Card>
 
