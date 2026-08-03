@@ -289,7 +289,7 @@ export default function ClientDashboard() {
 
       <Card>
         <CardHeader>
-          <CardTitle className="text-base">Vendor lead comparison — last 12 months</CardTitle>
+          <CardTitle className="text-base">Vendor attribution — last 12 months</CardTitle>
         </CardHeader>
         <CardContent className="h-80">
           <ResponsiveContainer width="100%" height="100%">

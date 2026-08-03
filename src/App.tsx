@@ -198,7 +198,7 @@ const App = () => (
                 path="/reports"
                 element={
                   <ProtectedRoute>
-                    <AppLayout><ReportsPage /></AppLayout>
+                    <AppLayout><AttributionPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />

@@ -22,6 +22,7 @@ import {
 } from 'recharts';
 import { AttributionOverrideDialog } from '@/components/AttributionOverrideDialog';
 import { downloadCsv } from '@/lib/exportCsv';
+import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
 
 interface Vendor { id: string; name: string; monthly_cost: number | null }
 interface SaleRow {
@@ -205,26 +206,7 @@ export default function AttributionPage() {
 
   const perf: VendorPerf[] = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
-
-    const vinToVendors = new Map<string, Set<string>>();
-    for (const l of leads) {
-      if (!l.vin || !l.vendor_id) continue;
-      const key = l.vin.trim().toUpperCase();
-      if (!key) continue;
-      const set = vinToVendors.get(key) ?? new Set<string>();
-      set.add(l.vendor_id);
-      vinToVendors.set(key, set);
-    }
-
-    const stockToVendors = new Map<string, Set<string>>();
-    for (const l of leads) {
-      if (!l.stock_number || !l.vendor_id) continue;
-      const key = l.stock_number.trim().toUpperCase();
-      if (!key) continue;
-      const set = stockToVendors.get(key) ?? new Set<string>();
-      set.add(l.vendor_id);
-      stockToVendors.set(key, set);
-    }
+    const { vinToVendors, stockToVendors, emailToVendors, phoneToVendors } = buildVendorLookupMaps(leads);
 
     const byVendor = new Map<string | null, { revenue: number; sales: number }>();
 
@@ -237,22 +219,20 @@ export default function AttributionPage() {
     };
 
     for (const s of sales) {
-      if (s.vendor_id && knownVendorIds.has(s.vendor_id)) {
-        credit(s.vendor_id, s);
+      const matches = getMatchingVendorIds({
+        sale: s,
+        knownVendorIds,
+        vinToVendors,
+        stockToVendors,
+        emailToVendors,
+        phoneToVendors,
+      });
+
+      if (matches.length > 0) {
+        for (const vid of matches) credit(vid, s);
         continue;
       }
-      const vin = s.vin ? s.vin.trim().toUpperCase() : '';
-      const vinVendors = vin ? vinToVendors.get(vin) : undefined;
-      if (vinVendors && vinVendors.size > 0) {
-        for (const vid of vinVendors) credit(vid, s);
-        continue;
-      }
-      const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
-      const stockVendors = stock ? stockToVendors.get(stock) : undefined;
-      if (stockVendors && stockVendors.size > 0) {
-        for (const vid of stockVendors) credit(vid, s);
-        continue;
-      }
+
       credit(null, s);
     }
 
@@ -369,7 +349,7 @@ export default function AttributionPage() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-2xl font-bold text-foreground">Lead Comparison</h1>
+          <h1 className="text-2xl font-bold text-foreground">Attribution</h1>
           <p className="text-sm text-muted-foreground">
             {activeOrg?.name} — vendor performance over the selected window.
           </p>
