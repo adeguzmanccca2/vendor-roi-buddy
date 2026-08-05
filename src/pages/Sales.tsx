@@ -401,6 +401,13 @@ export default function SalesPage() {
   // WHY "exactly 1" guard on solo Phone/Email fallback: if multiple leads share
   // the same phone or email we cannot confidently pick one, so we skip rather
   // than risk a wrong attribution.
+  //
+  // WHY vehicle-conflict filtering on tiers 3-7: a repeat/fleet buyer (same
+  // phone or email) can submit one lead and then buy many unrelated vehicles.
+  // If the sale has its own VIN/Stock# and it doesn't match a candidate
+  // lead's VIN/Stock#, that candidate is provably the wrong vehicle — drop it
+  // before doing name/uniqueness checks, even though tiers 3-7 don't require
+  // VIN/Stock# to match, they must not contradict.
   // ---------------------------------------------------------------------------
   const matchLeads = async () => {
     if (!activeOrgId) return;
@@ -414,6 +421,7 @@ export default function SalesPage() {
     type LeadEntry = {
       leadId: string; name: string; vendorId: string | null;
       normPhone: string; normEmail: string;
+      vin: string; stock: string;
     };
 
     const vinMap   = new Map<string, LeadEntry>();
@@ -430,6 +438,8 @@ export default function SalesPage() {
         vendorId: lead.vendor_id ?? null,
         normPhone,
         normEmail,
+        vin: (lead.vin ?? '').trim().toUpperCase(),
+        stock: (lead.stock_number ?? '').trim().toUpperCase(),
       };
       if (lead.vin) {
         const key = lead.vin.trim().toUpperCase();
@@ -452,6 +462,15 @@ export default function SalesPage() {
     // Find first candidate whose last name matches the sale's customer name
     const findByName = (candidates: LeadEntry[], saleName: string | null): LeadEntry | null =>
       candidates.find(c => namesMatch(c.name, saleName)) ?? null;
+
+    // Drop candidates whose VIN/Stock# actively contradicts the sale's own
+    // VIN/Stock# — a repeat buyer's phone/email can match many leads, but a
+    // mismatched vehicle identifier proves it's the wrong one.
+    const dropVehicleConflicts = (candidates: LeadEntry[], saleVin: string, saleStock: string): LeadEntry[] =>
+      candidates.filter(c =>
+        !(saleVin && c.vin && c.vin !== saleVin) &&
+        !(saleStock && c.stock && c.stock !== saleStock),
+      );
 
     const result = new Map<string, MatchResult>();
     type SaleUpdate = {
@@ -486,36 +505,36 @@ export default function SalesPage() {
 
       // 3. Phone + Name
       if (!matched && salePhone) {
-        const candidates = phoneMap.get(salePhone) ?? [];
+        const candidates = dropVehicleConflicts(phoneMap.get(salePhone) ?? [], saleVin, saleStock);
         const hit = findByName(candidates, sale.customer_full_name);
         if (hit) { matched = hit; method = 'Phone+Name'; confidence = 90; }
       }
 
       // 4. Email + Name
       if (!matched && saleEmail) {
-        const candidates = emailMap.get(saleEmail) ?? [];
+        const candidates = dropVehicleConflicts(emailMap.get(saleEmail) ?? [], saleVin, saleStock);
         const hit = findByName(candidates, sale.customer_full_name);
         if (hit) { matched = hit; method = 'Email+Name'; confidence = 90; }
       }
 
       // 5. Email + Phone (same lead has both, no name needed)
       if (!matched && salePhone && saleEmail) {
-        const candidates = phoneMap.get(salePhone) ?? [];
+        const candidates = dropVehicleConflicts(phoneMap.get(salePhone) ?? [], saleVin, saleStock);
         const hit = candidates.find(c => c.normEmail === saleEmail) ?? null;
         if (hit) { matched = hit; method = 'Email+Phone'; confidence = 88; }
       }
 
-      // 6. Phone alone — only if exactly 1 lead has this phone
+      // 6. Phone alone — only if exactly 1 non-conflicting lead has this phone
       if (!matched && salePhone) {
-        const candidates = phoneMap.get(salePhone) ?? [];
+        const candidates = dropVehicleConflicts(phoneMap.get(salePhone) ?? [], saleVin, saleStock);
         if (candidates.length === 1) {
           matched = candidates[0]; method = 'Phone'; confidence = 75;
         }
       }
 
-      // 7. Email alone — only if exactly 1 lead has this email
+      // 7. Email alone — only if exactly 1 non-conflicting lead has this email
       if (!matched && saleEmail) {
-        const candidates = emailMap.get(saleEmail) ?? [];
+        const candidates = dropVehicleConflicts(emailMap.get(saleEmail) ?? [], saleVin, saleStock);
         if (candidates.length === 1) {
           matched = candidates[0]; method = 'Email'; confidence = 75;
         }
