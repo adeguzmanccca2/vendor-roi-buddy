@@ -8,10 +8,10 @@ import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, Info, DollarSign, ShoppingCart, ListChecks, TrendingUp, Download } from 'lucide-react';
 import {
-  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid, Legend,
+  ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import { downloadCsv } from '@/lib/exportCsv';
-import { buildVendorComparisonData } from '@/lib/dashboardCharts';
+import { buildVendorComparisonData, type VendorComparisonSeries } from '@/lib/dashboardCharts';
 import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Org { id: string; name: string; slug: string; status: string }
@@ -326,34 +326,36 @@ export default function ClientDashboard() {
         <CardHeader>
           <CardTitle className="text-base">Vendor attribution — last 12 months</CardTitle>
           <p className="text-xs text-muted-foreground">
-            One line per vendor (leads by month) plus total attributed sales.
+            Total attributed sales and total leads, plus a leads breakdown by vendor.
           </p>
         </CardHeader>
-        <CardContent className="h-80">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={comparison.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-              <Tooltip
-                formatter={(value: any, name: any) => [value, name === 'attributedSales' ? 'Attributed sales' : name]}
-                contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-              />
-              <Legend />
-              {comparison.series.map(series => (
-                <Line
-                  key={series.key}
-                  type="monotone"
-                  dataKey={series.key}
-                  name={series.label}
-                  stroke={series.color}
-                  strokeWidth={2}
-                  dot={{ r: 2 }}
-                  activeDot={{ r: 4 }}
+        <CardContent>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={comparison.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  formatter={(value: any, name: any) => [value, name === 'attributedSales' ? 'Attributed sales' : name]}
+                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
                 />
-              ))}
-            </LineChart>
-          </ResponsiveContainer>
+                {comparison.series.map(series => (
+                  <Line
+                    key={series.key}
+                    type="monotone"
+                    dataKey={series.key}
+                    name={series.label}
+                    stroke={series.color}
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 4 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <VendorAttributionLegend series={comparison.series} />
         </CardContent>
       </Card>
 
@@ -369,6 +371,38 @@ export default function ClientDashboard() {
           <p><span className="text-muted-foreground">Status:</span> {org?.status}</p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function LegendSwatch({ series }: { series: VendorComparisonSeries }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: series.color }} />
+      {series.label}
+    </span>
+  );
+}
+
+// Totals (attributed sales, total leads) render first; the per-vendor leads
+// breakdown is grouped under its own heading below them, per request.
+function VendorAttributionLegend({ series }: { series: VendorComparisonSeries[] }) {
+  const totals = series.filter(s => s.key === 'attributedSales' || s.key === 'totalLeads');
+  const vendors = series.filter(s => s.key.startsWith('vendor:'));
+
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-4">
+        {totals.map(s => <LegendSwatch key={s.key} series={s} />)}
+      </div>
+      {vendors.length > 0 && (
+        <div>
+          <p className="mb-1.5 font-medium text-muted-foreground">Leads Breakdown by Vendor</p>
+          <div className="flex flex-wrap items-center gap-4">
+            {vendors.map(s => <LegendSwatch key={s.key} series={s} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

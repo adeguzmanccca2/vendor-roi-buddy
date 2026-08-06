@@ -27,10 +27,10 @@ describe('buildVendorComparisonData', () => {
       months: 2,
     });
 
-    expect(data.series.map(s => s.key)).toEqual(['attributedSales', 'vendor:v1', 'vendor:v2']);
+    expect(data.series.map(s => s.key)).toEqual(['attributedSales', 'totalLeads', 'vendor:v1', 'vendor:v2']);
     expect(data.data).toEqual([
-      { month: previousMonth, attributedSales: 1, 'vendor:v1': 1, 'vendor:v2': 1 },
-      { month: currentMonth, attributedSales: 1, 'vendor:v1': 1, 'vendor:v2': 0 },
+      { month: previousMonth, attributedSales: 1, totalLeads: 2, 'vendor:v1': 1, 'vendor:v2': 1 },
+      { month: currentMonth, attributedSales: 1, totalLeads: 1, 'vendor:v1': 1, 'vendor:v2': 0 },
     ]);
   });
 });

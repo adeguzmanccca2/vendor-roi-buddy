@@ -25,6 +25,7 @@ export interface VendorComparisonSeries {
 export interface VendorComparisonPoint {
   month: string;
   attributedSales: number;
+  totalLeads: number;
   [key: string]: number | string;
 }
 
@@ -51,11 +52,12 @@ export function buildVendorComparisonData({
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     const month = `${String(d.getMonth() + 1).padStart(2, '0')}/${String(d.getFullYear()).slice(2)}`;
-    buckets[key] = { month, attributedSales: 0 };
+    buckets[key] = { month, attributedSales: 0, totalLeads: 0 };
   }
 
   const series: VendorComparisonSeries[] = [
     { key: 'attributedSales', label: 'Attributed sales', color: 'hsl(var(--muted-foreground))' },
+    { key: 'totalLeads', label: 'Total leads', color: 'hsl(var(--foreground))' },
     ...vendors.map((vendor, index) => ({
       key: `vendor:${vendor.id}`,
       label: vendor.name,
@@ -78,6 +80,7 @@ export function buildVendorComparisonData({
       if (bucketKey in buckets) {
         const point = buckets[bucketKey] as VendorComparisonPoint;
         point[key] = (Number(point[key] ?? 0) + 1) as number;
+        point.totalLeads += 1;
       }
     }
   }
