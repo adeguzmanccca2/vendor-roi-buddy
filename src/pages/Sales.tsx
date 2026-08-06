@@ -408,6 +408,15 @@ export default function SalesPage() {
   // lead's VIN/Stock#, that candidate is provably the wrong vehicle — drop it
   // before doing name/uniqueness checks, even though tiers 3-7 don't require
   // VIN/Stock# to match, they must not contradict.
+  //
+  // WHY one-sale cap on vehicle-less leads (tiers 3-7 only, when the matched
+  // lead has no VIN and no Stock# at all): with zero vehicle evidence, phone/
+  // email is the ONLY signal, and a repeat/fleet account can generate many
+  // unrelated sales on the same phone/email over months. Letting one generic
+  // lead claim every one of those sales is exactly as wrong as a VIN
+  // conflict, just without a VIN to prove it. So such a lead is only allowed
+  // to claim the single closest-dated sale (by |sale_date - lead_date|); the
+  // rest are left unmatched for manual review.
   // ---------------------------------------------------------------------------
   const matchLeads = async () => {
     if (!activeOrgId) return;
@@ -415,13 +424,14 @@ export default function SalesPage() {
 
     const { data: leadsData } = await supabase
       .from('leads')
-      .select('id, customer_full_name, customer_email, customer_phone, normalized_phone, normalized_email, vendor_id, vin, stock_number')
+      .select('id, customer_full_name, customer_email, customer_phone, normalized_phone, normalized_email, vendor_id, vin, stock_number, lead_date')
       .eq('organization_id', activeOrgId);
 
     type LeadEntry = {
       leadId: string; name: string; vendorId: string | null;
       normPhone: string; normEmail: string;
       vin: string; stock: string;
+      leadDateMs: number | null;
     };
 
     const vinMap   = new Map<string, LeadEntry>();
@@ -440,6 +450,7 @@ export default function SalesPage() {
         normEmail,
         vin: (lead.vin ?? '').trim().toUpperCase(),
         stock: (lead.stock_number ?? '').trim().toUpperCase(),
+        leadDateMs: lead.lead_date ? new Date(lead.lead_date).getTime() : null,
       };
       if (lead.vin) {
         const key = lead.vin.trim().toUpperCase();
@@ -478,6 +489,28 @@ export default function SalesPage() {
       confidence: number; assignVendor: boolean; method: string;
     };
     const updates: SaleUpdate[] = [];
+
+    const finalize = (sale: Sale, matched: LeadEntry, method: string, confidence: number) => {
+      result.set(sale.id, {
+        customerName: matched.name || (sale.customer_full_name ?? 'Unknown'),
+        matchMethod: method,
+        vendorName: matched.vendorId ? vendorMap.get(matched.vendorId) ?? null : null,
+      });
+      updates.push({
+        id: sale.id,
+        lead_id: matched.leadId,
+        vendor_id: matched.vendorId && !sale.vendor_id ? matched.vendorId : (sale.vendor_id ?? null),
+        confidence,
+        assignVendor: !!(matched.vendorId && !sale.vendor_id),
+        method,
+      });
+    };
+
+    // Vehicle-less matches (tiers 3-7, lead has no VIN/Stock#) are held back
+    // per lead until every sale has been scanned, so we can pick only the
+    // closest-dated one per lead instead of claiming all of them.
+    type PendingVehicleLess = { sale: Sale; matched: LeadEntry; method: string; confidence: number; diffMs: number };
+    const vehicleLessByLead = new Map<string, PendingVehicleLess[]>();
 
     for (const sale of sales) {
       if (sale.attribution_status === 'manual') continue;
@@ -541,20 +574,28 @@ export default function SalesPage() {
       }
 
       if (matched) {
-        result.set(sale.id, {
-          customerName: matched.name || (sale.customer_full_name ?? 'Unknown'),
-          matchMethod: method,
-          vendorName: matched.vendorId ? vendorMap.get(matched.vendorId) ?? null : null,
-        });
-        updates.push({
-          id: sale.id,
-          lead_id: matched.leadId,
-          vendor_id: matched.vendorId && !sale.vendor_id ? matched.vendorId : (sale.vendor_id ?? null),
-          confidence,
-          assignVendor: !!(matched.vendorId && !sale.vendor_id),
-          method,
-        });
+        const isVehicleLess = (method === 'Phone+Name' || method === 'Email+Name' || method === 'Email+Phone' || method === 'Phone' || method === 'Email')
+          && !matched.vin && !matched.stock;
+
+        if (isVehicleLess) {
+          const saleMs = sale.sale_date ? new Date(sale.sale_date).getTime() : null;
+          const diffMs = (saleMs !== null && matched.leadDateMs !== null)
+            ? Math.abs(saleMs - matched.leadDateMs)
+            : Number.POSITIVE_INFINITY;
+          const arr = vehicleLessByLead.get(matched.leadId) ?? [];
+          arr.push({ sale, matched, method, confidence, diffMs });
+          vehicleLessByLead.set(matched.leadId, arr);
+        } else {
+          finalize(sale, matched, method, confidence);
+        }
       }
+    }
+
+    // Resolve each vehicle-less lead's candidate sales down to a single
+    // closest-dated winner; the rest stay unmatched.
+    for (const candidates of vehicleLessByLead.values()) {
+      const winner = candidates.reduce((best, c) => (c.diffMs < best.diffMs ? c : best));
+      finalize(winner.sale, winner.matched, winner.method, winner.confidence);
     }
 
     setLeadMatches(result);
