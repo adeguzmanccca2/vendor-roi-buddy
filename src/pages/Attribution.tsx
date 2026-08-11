@@ -25,6 +25,7 @@ import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
 import { buildVendorRoiTrend } from '@/lib/dashboardCharts';
 import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
+import { formatCompactMoney } from '@/lib/utils';
 
 interface Vendor { id: string; name: string; monthly_cost: number | null }
 interface SaleRow {
@@ -442,7 +443,7 @@ export default function AttributionPage() {
               <LineChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
                 <Tooltip
                   formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
                   contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}

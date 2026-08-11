@@ -12,6 +12,7 @@ import {
 } from 'recharts';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorComparisonData, type VendorComparisonSeries } from '@/lib/dashboardCharts';
+import { formatCompactMoney } from '@/lib/utils';
 import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Org { id: string; name: string; slug: string; status: string }
@@ -311,7 +312,7 @@ export default function ClientDashboard() {
             <LineChart data={trend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
               <Tooltip
                 formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
                 contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
