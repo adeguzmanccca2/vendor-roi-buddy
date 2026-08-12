@@ -21,6 +21,7 @@ import {
   LineChart, Line, Cell, Legend,
 } from 'recharts';
 import { AttributionOverrideDialog } from '@/components/AttributionOverrideDialog';
+import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
 import { buildVendorRoiTrend } from '@/lib/dashboardCharts';
@@ -90,29 +91,75 @@ const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`;
 
-type Period = `m:${string}`;
-
-function isMonthPeriod(p: Period): p is `m:${string}` {
-  return typeof p === 'string' && p.startsWith('m:');
-}
+// m:YYYY-MM (single month) | q:YYYY-Q# (quarter) | c:YYYY-MM:YYYY-MM (custom, inclusive)
+type Period = `m:${string}` | `q:${string}` | `c:${string}`;
 
 function currentMonthPeriod(): Period {
   const d = new Date();
   return `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
 }
 
+function parseYm(ym: string): { y: number; m: number } {
+  const [y, m] = ym.split('-').map(Number);
+  return { y, m };
+}
+
 function periodRange(p: Period): { start: string | null; end: string | null } {
-  if (isMonthPeriod(p)) {
-    const [y, m] = p.slice(2).split('-').map(Number);
-    const start = new Date(Date.UTC(y, m - 1, 1));
-    const end   = new Date(Date.UTC(y, m, 1));
-    return { start: start.toISOString(), end: end.toISOString() };
+  if (p.startsWith('m:')) {
+    const { y, m } = parseYm(p.slice(2));
+    return {
+      start: new Date(Date.UTC(y, m - 1, 1)).toISOString(),
+      end:   new Date(Date.UTC(y, m, 1)).toISOString(),
+    };
+  }
+  if (p.startsWith('q:')) {
+    const [yearStr, qStr] = p.slice(2).split('-Q');
+    const y = Number(yearStr);
+    const startMonth = (Number(qStr) - 1) * 3; // 0-indexed: Q1->0, Q2->3, Q3->6, Q4->9
+    return {
+      start: new Date(Date.UTC(y, startMonth, 1)).toISOString(),
+      end:   new Date(Date.UTC(y, startMonth + 3, 1)).toISOString(),
+    };
+  }
+  if (p.startsWith('c:')) {
+    const [fromYm, toYm] = p.slice(2).split(':');
+    const from = parseYm(fromYm);
+    const to = parseYm(toYm);
+    return {
+      start: new Date(Date.UTC(from.y, from.m - 1, 1)).toISOString(),
+      end:   new Date(Date.UTC(to.y, to.m, 1)).toISOString(), // first day AFTER the end month (inclusive)
+    };
   }
   return { start: null, end: null };
 }
 
-function periodMonths(_p: Period): number {
+// Whole months in the window — drives cost = monthly_cost * months.
+function periodMonths(p: Period): number {
+  if (p.startsWith('q:')) return 3;
+  if (p.startsWith('c:')) {
+    const [fromYm, toYm] = p.slice(2).split(':');
+    const from = parseYm(fromYm);
+    const to = parseYm(toYm);
+    return Math.max(1, (to.y - from.y) * 12 + (to.m - from.m) + 1);
+  }
   return 1;
+}
+
+function periodLabel(p: Period): string {
+  const fmtYm = (ym: string) => {
+    const { y, m } = parseYm(ym);
+    return new Date(y, m - 1, 1).toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
+  };
+  if (p.startsWith('m:')) return fmtYm(p.slice(2));
+  if (p.startsWith('q:')) {
+    const [y, q] = p.slice(2).split('-Q');
+    return `Q${q} ${y}`;
+  }
+  if (p.startsWith('c:')) {
+    const [fromYm, toYm] = p.slice(2).split(':');
+    return `${fmtYm(fromYm)} – ${fmtYm(toYm)}`;
+  }
+  return '';
 }
 
 function monthOptions(count = 24): { value: `m:${string}`; label: string }[] {
@@ -123,6 +170,19 @@ function monthOptions(count = 24): { value: `m:${string}`; label: string }[] {
     const value = `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` as const;
     const label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
     out.push({ value, label });
+  }
+  return out;
+}
+
+function quarterOptions(count = 8): { value: `q:${string}`; label: string }[] {
+  const now = new Date();
+  let y = now.getFullYear();
+  let q = Math.floor(now.getMonth() / 3) + 1; // 1-4
+  const out: { value: `q:${string}`; label: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    out.push({ value: `q:${y}-Q${q}` as const, label: `Q${q} ${y}` });
+    q -= 1;
+    if (q === 0) { q = 4; y -= 1; }
   }
   return out;
 }
@@ -145,6 +205,8 @@ export default function AttributionPage() {
   const [trendLeads, setTrendLeads] = useState<LeadRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
+  const [customFrom, setCustomFrom] = useState('');
+  const [customTo, setCustomTo] = useState('');
   const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
   const [overrideOpen, setOverrideOpen] = useState(false);
   const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
@@ -366,7 +428,7 @@ export default function AttributionPage() {
       roi_pct: p.cost > 0 ? (p.roi * 100).toFixed(2) : '',
       category: p.category,
     }));
-    downloadCsv(`vendor-roi-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    downloadCsv(`vendor-roi-${period.replace(/:/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
 
   const exportSales = () => {
@@ -385,8 +447,17 @@ export default function AttributionPage() {
       confidence: s.attribution_confidence ?? '',
       manual_override: s.manual_override ? 'yes' : 'no',
     }));
-    downloadCsv(`sales-${period}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
+    downloadCsv(`sales-${period.replace(/:/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
+
+  const applyCustomRange = () => {
+    if (!customFrom || !customTo) return;
+    const from = customFrom <= customTo ? customFrom : customTo;
+    const to = customFrom <= customTo ? customTo : customFrom;
+    setPeriod(`c:${from}:${to}`);
+  };
+
+  const isCustom = period.startsWith('c:');
 
   const matchedSales = sales.filter(s => !!s.lead_id || !!s.vendor_id).length;
   const matchRate = sales.length > 0 ? matchedSales / sales.length : 0;
@@ -399,13 +470,19 @@ export default function AttributionPage() {
         <div>
           <h1 className="text-2xl font-bold text-foreground">Attribution</h1>
           <p className="text-sm text-muted-foreground">
-            {activeOrg?.name} — vendor performance over the selected window.
+            {activeOrg?.name} — showing <span className="font-medium text-foreground">{periodLabel(period)}</span>.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
-          <Select value={period} onValueChange={v => setPeriod(v as Period)}>
-            <SelectTrigger className="w-52"><SelectValue /></SelectTrigger>
+          <Select value={isCustom ? '' : period} onValueChange={v => setPeriod(v as Period)}>
+            <SelectTrigger className="w-48"><SelectValue placeholder={isCustom ? periodLabel(period) : undefined} /></SelectTrigger>
             <SelectContent>
+              <SelectGroup>
+                <SelectLabel>Quarter</SelectLabel>
+                {quarterOptions(8).map(q => (
+                  <SelectItem key={q.value} value={q.value}>{q.label}</SelectItem>
+                ))}
+              </SelectGroup>
               <SelectGroup>
                 <SelectLabel>Month</SelectLabel>
                 {monthOptions(36).map(m => (
@@ -414,6 +491,23 @@ export default function AttributionPage() {
               </SelectGroup>
             </SelectContent>
           </Select>
+
+          {/* Custom range: pick a beginning and end month, then Apply. */}
+          <div className="flex items-center gap-1">
+            <Input
+              type="month" className="w-36 text-xs" title="From month"
+              value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">to</span>
+            <Input
+              type="month" className="w-36 text-xs" title="To month"
+              value={customTo} onChange={e => setCustomTo(e.target.value)}
+            />
+            <Button variant="outline" size="sm" onClick={applyCustomRange} disabled={!customFrom || !customTo}>
+              Apply
+            </Button>
+          </div>
+
           <Button variant="outline" onClick={exportVendorRoi}>
             <Download className="mr-1 h-4 w-4" /> Vendor ROI
           </Button>
