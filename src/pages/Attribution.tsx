@@ -203,6 +203,7 @@ export default function AttributionPage() {
   const [trendSales, setTrendSales] = useState<{ sale_date: string | null; sale_price: number | null }[]>([]);
   const [trendSalesFull, setTrendSalesFull] = useState<SaleRow[]>([]);
   const [trendLeads, setTrendLeads] = useState<LeadRow[]>([]);
+  const [leadDatesById, setLeadDatesById] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [customFrom, setCustomFrom] = useState('');
@@ -250,6 +251,12 @@ export default function AttributionPage() {
         .eq('organization_id', activeOrgId)
         .gte('lead_date', trendSinceIso);
 
+      // Lightweight, unscoped by period/date — used only to look up "when was
+      // the matching lead" for a sale in the "Sales attributed to X" dialogs,
+      // via the sale's own lead_id, regardless of the selected window.
+      const aldQ = supabase.from('leads').select('id, lead_date')
+        .eq('organization_id', activeOrgId);
+
       const [
         { data: vData, error: vErr },
         { data: lData, error: lErr },
@@ -257,7 +264,8 @@ export default function AttributionPage() {
         { data: tData },
         { data: tSData },
         { data: tLData },
-      ] = await Promise.all([vQ, lQ, sQ, tQ, tSQ, tLQ]);
+        { data: aldData },
+      ] = await Promise.all([vQ, lQ, sQ, tQ, tSQ, tLQ, aldQ]);
 
       if (vErr) toast.error('Failed to load vendors: ' + vErr.message);
       if (lErr) toast.error('Failed to load leads: ' + lErr.message);
@@ -278,6 +286,11 @@ export default function AttributionPage() {
       setTrendSales((tData ?? []) as any);
       setTrendSalesFull((tSData ?? []) as SaleRow[]);
       setTrendLeads((tLData ?? []) as LeadRow[]);
+      const byId: Record<string, string> = {};
+      for (const r of (aldData ?? []) as { id: string; lead_date: string | null }[]) {
+        if (r.lead_date) byId[r.id] = r.lead_date;
+      }
+      setLeadDatesById(byId);
     } catch (e: any) {
       toast.error('Failed to load attribution data: ' + (e.message ?? 'Unknown error'));
     } finally {
@@ -795,8 +808,34 @@ export default function AttributionPage() {
               if (!s.vendor_id && vin && allVinToVendors.get(vin)?.has(vid)) return true;
               if (!s.vendor_id && !vin && stock && allStockToVendors.get(stock)?.has(vid)) return true;
               return false;
-            });
+            }).sort((a, b) => (a.customer_full_name ?? '').localeCompare(b.customer_full_name ?? ''));
             const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
+
+            // Lead date the sale matched against — prefer the sale's own lead_id
+            // (set whenever Match Leads or a manual link ran, regardless of VIN/
+            // Stock#/phone/email which method found it) so this isn't limited to
+            // the currently selected period. Falls back to a VIN/Stock# lookup
+            // across period + trailing-12-month leads for sales that were
+            // attributed without a stored lead_id.
+            const vinToLeadDate = new Map<string, string>();
+            const stockToLeadDate = new Map<string, string>();
+            for (const l of [...leads, ...trendLeads]) {
+              if (!l.lead_date) continue;
+              if (l.vin) {
+                const v = l.vin.trim().toUpperCase();
+                if (v && !vinToLeadDate.has(v)) vinToLeadDate.set(v, l.lead_date);
+              }
+              if (l.stock_number) {
+                const sk = l.stock_number.trim().toUpperCase();
+                if (sk && !stockToLeadDate.has(sk)) stockToLeadDate.set(sk, l.lead_date);
+              }
+            }
+            const leadDateFor = (s: SaleRow): string | null => {
+              if (s.lead_id && leadDatesById[s.lead_id]) return leadDatesById[s.lead_id];
+              const vin = s.vin ? s.vin.trim().toUpperCase() : '';
+              const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
+              return (vin && vinToLeadDate.get(vin)) || (stock && stockToLeadDate.get(stock)) || null;
+            };
             return (
               <>
                 <DialogHeader>
@@ -813,25 +852,30 @@ export default function AttributionPage() {
                         <th className="px-3 py-2 text-left">Vehicle</th>
                         <th className="px-3 py-2 text-left">Stock #</th>
                         <th className="px-3 py-2 text-right">Price</th>
+                        <th className="px-3 py-2 text-left">Lead Date</th>
                         <th className="px-3 py-2 text-center">Attribution</th>
                       </tr>
                     </thead>
                     <tbody>
-                      {list.map(s => (
-                        <tr key={s.id} className="border-b hover:bg-muted/30">
-                          <td className="px-3 py-2 text-muted-foreground">{s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}</td>
-                          <td className="px-3 py-2">{s.customer_full_name ?? '—'}</td>
-                          <td className="px-3 py-2 text-muted-foreground font-mono text-xs">{s.vin ?? '—'}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}</td>
-                          <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
-                          <td className="px-3 py-2 text-right">{fmtMoney(Number(s.sale_price ?? 0))}</td>
-                          <td className="px-3 py-2 text-center">
-                            <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
-                          </td>
-                        </tr>
-                      ))}
+                      {list.map(s => {
+                        const leadDate = leadDateFor(s);
+                        return (
+                          <tr key={s.id} className="border-b hover:bg-muted/30">
+                            <td className="px-3 py-2 text-muted-foreground">{s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}</td>
+                            <td className="px-3 py-2">{s.customer_full_name ?? '—'}</td>
+                            <td className="px-3 py-2 text-muted-foreground font-mono text-xs">{s.vin ?? '—'}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{s.stock_number ?? '—'}</td>
+                            <td className="px-3 py-2 text-right">{fmtMoney(Number(s.sale_price ?? 0))}</td>
+                            <td className="px-3 py-2 text-muted-foreground">{leadDate ? new Date(leadDate).toLocaleDateString() : '—'}</td>
+                            <td className="px-3 py-2 text-center">
+                              <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
+                            </td>
+                          </tr>
+                        );
+                      })}
                       {list.length === 0 && (
-                        <tr><td colSpan={7} className="px-3 py-6 text-center text-sm text-muted-foreground">No sales matched this vendor in the selected period.</td></tr>
+                        <tr><td colSpan={8} className="px-3 py-6 text-center text-sm text-muted-foreground">No sales matched this vendor in the selected period.</td></tr>
                       )}
                     </tbody>
                   </table>
