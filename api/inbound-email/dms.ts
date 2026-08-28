@@ -94,9 +94,34 @@ function normalizeRowKeys(row: Record<string, unknown>): Record<string, unknown>
   return out;
 }
 
-async function mapSaleRow(rawRow: Record<string, unknown>, organizationId: string) {
-  const row = normalizeRowKeys(rawRow);
+interface EmailCredential {
+  id: string;
+  organization_id: string;
+  sale_count: number;
+  location_label: string | null;
+}
 
+function rowLocation(row: Record<string, unknown>): string | null {
+  return pick(row, 'location', 'store', 'rooftop', 'dealership_location', 'dealership');
+}
+
+// WHY case-insensitive exact match, not fuzzy: location_label is set
+// deliberately per credential row (see migration
+// 20260828000000_multi_location_email_routing.sql) specifically so it can
+// be matched exactly against whatever value the dealership's export uses —
+// fuzzy matching here would risk silently routing a row to the wrong
+// dealership, which is worse than rejecting an unmatched row outright.
+function matchCredentialByLocation(creds: EmailCredential[], location: string | null): EmailCredential | null {
+  if (!location) return null;
+  const target = location.trim().toLowerCase();
+  return creds.find(c => (c.location_label ?? '').trim().toLowerCase() === target) ?? null;
+}
+
+// WHY row is pre-normalized: the handler needs each row's normalized keys
+// once anyway (to read 'location' for multi-org routing before we know
+// which organizationId to map into), so normalizeRowKeys is called there
+// and passed in here instead of duplicating the call per row.
+async function mapSaleRow(row: Record<string, unknown>, organizationId: string) {
   const firstName = pick(row, 'first_name', 'customer_first_name');
   const lastName = pick(row, 'last_name', 'customer_last_name');
   const fullNamePicked = pick(row, 'full_name', 'name', 'customer_full_name', 'customer_name');
@@ -276,15 +301,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
   const admin = createClient(supabaseUrl, serviceRoleKey);
 
-  // ---- Step 2: identify the dealership via sender domain -----------------
+  // ---- Step 2: identify the dealership(s) via sender domain --------------
+  // A domain can now resolve to more than one credential/org — a
+  // multi-location dealer group (e.g. Bayshore Ford + Bayshore Trucks)
+  // sharing one export mailbox, disambiguated per-row by 'location' (see
+  // migration 20260828000000_multi_location_email_routing.sql). A
+  // single-location domain still has exactly one row and behaves as before.
   const domain = extractDomain(fromHeader);
-  const { data: cred, error: credErr } = domain
+  const { data: credsData, error: credErr } = domain
     ? await admin
         .from('api_credentials')
-        .select('id, organization_id, sale_count')
+        .select('id, organization_id, sale_count, location_label')
         .eq('sender_domain', domain)
         .eq('is_active', true)
-        .maybeSingle()
     : { data: null, error: null };
 
   if (credErr) {
@@ -293,7 +322,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  if (!cred) {
+  if (!credsData || credsData.length === 0) {
     // WHY return 200 for unknown senders: Postmark retries on non-2xx
     // responses. An unknown sender isn't Postmark's fault — returning 200
     // stops the retry loop while we investigate.
@@ -302,14 +331,22 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return;
   }
 
-  const { data: org } = await admin
-    .from('organizations')
-    .select('name')
-    .eq('id', cred.organization_id)
-    .maybeSingle();
-  const orgName = org?.name ?? 'Unknown dealership';
+  const creds = credsData as EmailCredential[];
+  const multiLocation = creds.length > 1;
   const receivedAt = payload.Date ? new Date(payload.Date) : new Date();
   const subjectTimestamp = formatSubjectTimestamp(receivedAt);
+
+  let summaryLabel: string;
+  if (multiLocation) {
+    summaryLabel = `${domain} (${creds.length} locations)`;
+  } else {
+    const { data: org } = await admin
+      .from('organizations')
+      .select('name')
+      .eq('id', creds[0].organization_id)
+      .maybeSingle();
+    summaryLabel = org?.name ?? 'Unknown dealership';
+  }
 
   // ---- Step 3: extract the attachment ------------------------------------
   const attachment = (payload.Attachments ?? []).find(a =>
@@ -323,7 +360,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await sendBrevoEmail({
         apiKey: brevoApiKey,
         to: [notifyEmail],
-        subject: `⚠️ DMS Email Received (No Attachment) — ${orgName} — ${subjectTimestamp}`,
+        subject: `⚠️ DMS Email Received (No Attachment) — ${summaryLabel} — ${subjectTimestamp}`,
         html: plainTextEmailHtml([
           `Email received from: ${fromHeader}`,
           `Subject: ${payload.Subject ?? '(none)'}`,
@@ -333,8 +370,11 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       });
     }
 
+    // WHY logged against creds[0]'s org: this is a domain-level failure
+    // (no file at all), not specific to one location, and there's no
+    // "ambiguous/unassigned" org to log against instead.
     await admin.from('dms_import_logs').insert({
-      organization_id: cred.organization_id,
+      organization_id: creds[0].organization_id,
       filename: null,
       sender_email: fromHeader,
       rows_imported: 0,
@@ -351,18 +391,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ---- Step 4: run the import pipeline -----------------------------------
-  let rowsImported = 0;
-  let duplicatesSkipped = 0;
-  const errors: string[] = [];
+  // Single-location domain: every row maps to that one org (unchanged
+  // behavior). Multi-location domain: each row must carry a 'location'
+  // value matching one credential's location_label; rows with no match
+  // are rejected rather than silently routed to the wrong dealership.
+  interface OrgResult { rowsImported: number; duplicatesSkipped: number; errors: string[] }
+  const resultsByCredId = new Map<string, OrgResult>();
+  for (const c of creds) resultsByCredId.set(c.id, { rowsImported: 0, duplicatesSkipped: 0, errors: [] });
+  const unmatchedLocationErrors: string[] = [];
 
   try {
     const buffer = Buffer.from(attachment.Content, 'base64');
     const rawRows = parseAttachmentRows(attachment.Name, buffer);
-    const mappedRows = await Promise.all(rawRows.map(r => mapSaleRow(r, cred.organization_id)));
+    const normalizedRows = rawRows.map(normalizeRowKeys);
 
-    if (mappedRows.length === 0) {
-      errors.push('Attachment parsed but contained 0 rows');
-    } else {
+    if (normalizedRows.length === 0) {
+      resultsByCredId.get(creds[0].id)!.errors.push('Attachment parsed but contained 0 rows');
+    } else if (!multiLocation) {
+      const mappedRows = await Promise.all(normalizedRows.map(r => mapSaleRow(r, creds[0].organization_id)));
+      const result = resultsByCredId.get(creds[0].id)!;
       // Same dedup strategy as receive-sales: upsert on the
       // (organization_id, dedup_hash) unique index so re-sending the same
       // file (or a file with overlapping rows from a prior run) is a safe
@@ -371,52 +418,125 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         .from('sales')
         .upsert(mappedRows, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
         .select('id');
-
       if (upsertErr) {
-        errors.push(upsertErr.message);
+        result.errors.push(upsertErr.message);
       } else {
-        rowsImported = upserted?.length ?? 0;
-        duplicatesSkipped = mappedRows.length - rowsImported;
-        await admin.rpc('attribute_sales_for_org', { _org_id: cred.organization_id });
-        await admin
-          .from('api_credentials')
-          .update({ last_used_at: new Date().toISOString(), sale_count: cred.sale_count + rowsImported })
-          .eq('id', cred.id);
+        result.rowsImported = upserted?.length ?? 0;
+        result.duplicatesSkipped = mappedRows.length - result.rowsImported;
+      }
+    } else {
+      // Group rows by matched credential/location, then upsert per org so
+      // one bad row in one location can't block the other location's rows.
+      const rowsByCredId = new Map<string, Record<string, unknown>[]>();
+      for (const c of creds) rowsByCredId.set(c.id, []);
+      const knownLocations = creds.map(c => c.location_label).filter(Boolean).join(', ');
+      normalizedRows.forEach((row, idx) => {
+        const location = rowLocation(row);
+        const match = matchCredentialByLocation(creds, location);
+        if (!match) {
+          const label = location ? `"${location}"` : '(missing)';
+          unmatchedLocationErrors.push(
+            `Row ${idx + 1}: location ${label} did not match any known location (${knownLocations})`,
+          );
+          return;
+        }
+        rowsByCredId.get(match.id)!.push(row);
+      });
+
+      for (const c of creds) {
+        const rows = rowsByCredId.get(c.id)!;
+        if (rows.length === 0) continue;
+        const mappedRows = await Promise.all(rows.map(r => mapSaleRow(r, c.organization_id)));
+        const result = resultsByCredId.get(c.id)!;
+        const { data: upserted, error: upsertErr } = await admin
+          .from('sales')
+          .upsert(mappedRows, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
+          .select('id');
+        if (upsertErr) {
+          result.errors.push(upsertErr.message);
+        } else {
+          result.rowsImported = upserted?.length ?? 0;
+          result.duplicatesSkipped = mappedRows.length - result.rowsImported;
+        }
       }
     }
   } catch (e) {
-    errors.push((e as Error).message);
+    resultsByCredId.get(creds[0].id)!.errors.push((e as Error).message);
   }
 
-  const status: 'success' | 'partial' | 'failed' =
-    errors.length > 0 && rowsImported === 0 ? 'failed' : errors.length > 0 ? 'partial' : 'success';
+  // Attribute + update usage stats only for orgs that actually got rows.
+  for (const c of creds) {
+    const result = resultsByCredId.get(c.id)!;
+    if (result.rowsImported > 0) {
+      await admin.rpc('attribute_sales_for_org', { _org_id: c.organization_id });
+      await admin
+        .from('api_credentials')
+        .update({ last_used_at: new Date().toISOString(), sale_count: c.sale_count + result.rowsImported })
+        .eq('id', c.id);
+    }
+  }
 
-  // ---- Step 6: log the import ---------------------------------------------
-  await admin.from('dms_import_logs').insert({
-    organization_id: cred.organization_id,
-    filename: attachment.Name,
-    sender_email: fromHeader,
-    rows_imported: rowsImported,
-    duplicates_skipped: duplicatesSkipped,
-    error_count: errors.length,
-    raw_errors: errors,
-    received_at: receivedAt.toISOString(),
-    processed_at: new Date().toISOString(),
-    status,
-  });
+  // ---- Step 6: log the import — one row per org that had activity, plus
+  // a shared row (against the first credential) for any rows that couldn't
+  // be matched to a location -------------------------------------------------
+  for (const c of creds) {
+    const result = resultsByCredId.get(c.id)!;
+    if (result.rowsImported === 0 && result.duplicatesSkipped === 0 && result.errors.length === 0) continue;
+    const status: 'success' | 'partial' | 'failed' =
+      result.errors.length > 0 && result.rowsImported === 0 ? 'failed' : result.errors.length > 0 ? 'partial' : 'success';
+    await admin.from('dms_import_logs').insert({
+      organization_id: c.organization_id,
+      filename: attachment.Name,
+      sender_email: fromHeader,
+      rows_imported: result.rowsImported,
+      duplicates_skipped: result.duplicatesSkipped,
+      error_count: result.errors.length,
+      raw_errors: result.errors,
+      received_at: receivedAt.toISOString(),
+      processed_at: new Date().toISOString(),
+      status,
+    });
+  }
+  if (unmatchedLocationErrors.length > 0) {
+    await admin.from('dms_import_logs').insert({
+      organization_id: creds[0].organization_id,
+      filename: attachment.Name,
+      sender_email: fromHeader,
+      rows_imported: 0,
+      duplicates_skipped: 0,
+      error_count: unmatchedLocationErrors.length,
+      raw_errors: unmatchedLocationErrors,
+      received_at: receivedAt.toISOString(),
+      processed_at: new Date().toISOString(),
+      status: 'partial',
+    });
+  }
+
+  const totalRowsImported = [...resultsByCredId.values()].reduce((s, r) => s + r.rowsImported, 0);
+  const totalDuplicatesSkipped = [...resultsByCredId.values()].reduce((s, r) => s + r.duplicatesSkipped, 0);
+  const totalErrors = [...resultsByCredId.values()].flatMap(r => r.errors).concat(unmatchedLocationErrors);
+  const overallStatus: 'success' | 'partial' | 'failed' =
+    totalErrors.length > 0 && totalRowsImported === 0 ? 'failed' : totalErrors.length > 0 ? 'partial' : 'success';
 
   // ---- Step 5: send confirmation/failure email -----------------------------
   if (brevoApiKey && notifyEmail) {
-    const ok = status !== 'failed';
+    const ok = overallStatus !== 'failed';
     const subject = ok
-      ? `✅ DMS Import Complete — ${orgName} — ${subjectTimestamp}`
-      : `❌ DMS Import Failed — ${orgName} — ${subjectTimestamp}`;
+      ? `✅ DMS Import Complete — ${summaryLabel} — ${subjectTimestamp}`
+      : `❌ DMS Import Failed — ${summaryLabel} — ${subjectTimestamp}`;
+    const perLocationLines = multiLocation
+      ? creds.map(c => {
+          const r = resultsByCredId.get(c.id)!;
+          return `  - ${c.location_label ?? c.organization_id}: ${r.rowsImported} imported, ${r.duplicatesSkipped} duplicates, ${r.errors.length} errors`;
+        })
+      : [];
     const html = plainTextEmailHtml([
       `Import received from: ${fromHeader}`,
       `File: ${attachment.Name}`,
-      `Rows imported: ${rowsImported}`,
-      `Duplicates skipped: ${duplicatesSkipped}`,
-      `Errors: ${errors.length}${errors.length ? '\n  - ' + errors.join('\n  - ') : ''}`,
+      ...(multiLocation ? ['By location:', ...perLocationLines] : []),
+      `Rows imported: ${totalRowsImported}`,
+      `Duplicates skipped: ${totalDuplicatesSkipped}`,
+      `Errors: ${totalErrors.length}${totalErrors.length ? '\n  - ' + totalErrors.join('\n  - ') : ''}`,
       '',
       `View dashboard: ${dashboardUrl}`,
     ]);
@@ -427,12 +547,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // written the audit log — Postmark retrying a failed import won't fix a
   // bad file, it'll just resend the same broken attachment.
   res.status(200).json({
-    success: status !== 'failed',
-    status,
-    organizationId: cred.organization_id,
+    success: overallStatus !== 'failed',
+    status: overallStatus,
     filename: attachment.Name,
-    rowsImported,
-    duplicatesSkipped,
-    errors,
+    rowsImported: totalRowsImported,
+    duplicatesSkipped: totalDuplicatesSkipped,
+    errors: totalErrors,
+    ...(multiLocation
+      ? {
+          byLocation: creds.map(c => ({
+            organizationId: c.organization_id,
+            location: c.location_label,
+            ...resultsByCredId.get(c.id)!,
+          })),
+        }
+      : {}),
   });
 }
