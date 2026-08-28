@@ -26,3 +26,5 @@ dist-ssr
 # Tooling
 .claude/
 supabase/.temp/
+.vercel
+.env*

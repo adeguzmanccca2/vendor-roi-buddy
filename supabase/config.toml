@@ -1,1 +1,7 @@
-project_id = "bzvewkhbcmgdhqcvljbm"
+project_id = "jcsfcgnsrtwggdhuyrqy"
+
+[functions.receive-leads]
+verify_jwt = false
+
+[functions.receive-sales]
+verify_jwt = false

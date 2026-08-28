@@ -25,7 +25,7 @@ export default function AcceptInvite() {
   const [params] = useSearchParams();
   const navigate = useNavigate();
   const token = params.get('token') ?? '';
-  const { user, refresh } = useAuth();
+  const { user, refresh, signOut } = useAuth();
 
   const [invitation, setInvitation] = useState<Invitation | null>(null);
   const [orgNames, setOrgNames] = useState<string[]>([]);
@@ -90,7 +90,6 @@ export default function AcceptInvite() {
       email: invitation.email,
       password: pwRes.data,
       options: {
-        emailRedirectTo: `${window.location.origin}/accept-invite?token=${token}`,
         data: { full_name: nameRes.data },
       },
     });
@@ -113,24 +112,29 @@ export default function AcceptInvite() {
       toast.error(error.message);
       return;
     }
-    // If email confirmation is required, session may be null — user will need to verify.
-    // Try to accept now; if no session, prompt them.
+    // Email confirmation is disabled for this project, so signUp returns a session immediately.
     const { data: sess } = await supabase.auth.getSession();
     if (sess.session) {
       await acceptAfterAuth();
     } else {
-      toast.success('Check your email to verify your account, then return to this link.');
+      toast.error('Could not start a session after signup. Please try signing in.');
+      navigate('/auth');
     }
     setBusy(false);
   };
 
-  // If user is signed in already, auto-accept.
+  // The signed-in account must be the invited address, or accept_invitation will reject it.
+  const emailMismatch =
+    !!user && !!invitation &&
+    (user.email ?? '').trim().toLowerCase() !== invitation.email.trim().toLowerCase();
+
+  // If the right user is signed in already, auto-accept.
   useEffect(() => {
-    if (user && invitation && invitation.status === 'pending') {
+    if (user && invitation && invitation.status === 'pending' && !emailMismatch) {
       acceptAfterAuth();
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [user, invitation]);
+  }, [user, invitation, emailMismatch]);
 
   if (loading) {
     return (
@@ -167,6 +171,35 @@ export default function AcceptInvite() {
               {expired ? 'This invite link has expired. Please ask for a new one.' : 'This invitation is no longer pending.'}
             </p>
             <Button className="mt-4" onClick={() => navigate('/auth')}>Go to sign in</Button>
+          </CardContent>
+        </Card>
+      </div>
+    );
+  }
+
+  if (emailMismatch) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background p-4">
+        <Card className="w-full max-w-md">
+          <CardHeader><CardTitle>Wrong account signed in</CardTitle></CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              This invitation was sent to{' '}
+              <span className="font-medium text-foreground">{invitation.email}</span>, but you're
+              signed in as <span className="font-medium text-foreground">{user?.email}</span>.
+            </p>
+            <p className="text-sm text-muted-foreground">
+              Sign out and come back to this link to accept it as {invitation.email}.
+            </p>
+            <Button
+              className="w-full"
+              onClick={async () => {
+                await signOut();
+                navigate(`/accept-invite?token=${token}`, { replace: true });
+              }}
+            >
+              Sign out and continue
+            </Button>
           </CardContent>
         </Card>
       </div>
