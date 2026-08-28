@@ -277,16 +277,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // WHY: this endpoint is public. Without validation, anyone who discovers
   // the URL can POST fake payloads and trigger imports. A shared secret
   // stops casual abuse (Postmark inbound webhooks aren't signed by default).
+  //
+  // WHY a query param instead of (or in addition to) a header: Postmark's
+  // inbound-stream webhook config is just a bare URL field — there's no UI
+  // there to attach a custom HTTP header (that only exists for
+  // outbound/broadcast webhooks). Confirmed in production: Postmark was
+  // never sending the x-postmark-inbound-secret header at all. A query
+  // param on the webhook URL (e.g. .../dms?secret=xxx) works since Postmark
+  // just POSTs to whatever URL you configure, verbatim.
   const expectedSecret = process.env.POSTMARK_INBOUND_SECRET;
   if (!expectedSecret) {
     console.error('[inbound-email/dms] POSTMARK_INBOUND_SECRET is not configured');
     res.status(500).json({ error: 'Server misconfigured' });
     return;
   }
-  const providedSecret = req.headers['x-postmark-inbound-secret'];
+  const providedSecret = req.query.secret ?? req.headers['x-postmark-inbound-secret'];
   if (!providedSecret || providedSecret !== expectedSecret) {
     console.warn('[inbound-email/dms] rejected request: missing/invalid inbound secret', {
-      hasHeader: providedSecret != null,
+      hasQueryParam: req.query.secret != null,
+      hasHeader: req.headers['x-postmark-inbound-secret'] != null,
     });
     res.status(401).json({ error: 'Unauthorized' });
     return;
