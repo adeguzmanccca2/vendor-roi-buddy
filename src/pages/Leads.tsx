@@ -25,6 +25,7 @@ import {
   parseVehicle,
   buildDedupHash,
 } from '@/lib/normalize';
+import { type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Vendor { id: string; name: string; is_active: boolean }
 interface Lead {
@@ -90,6 +91,7 @@ const emptyForm = {
   customer_full_name: '', customer_email: '', customer_phone: '',
   vehicle_of_interest: '', lead_date: '', lead_status: 'new',
   vendor_id: 'none', notes: '', stock_number: '',
+  vin: '', source_label: '', type_of_vehicle: '', type_of_leads: '',
 };
 
 export default function LeadsPage() {
@@ -130,6 +132,8 @@ export default function LeadsPage() {
   const [saleResults, setSaleResults]       = useState<SaleMatch[]>([]);
   const [saleSearching, setSaleSearching]   = useState(false);
   const [linking, setLinking]               = useState(false);
+
+  const [manualLeadCounts, setManualLeadCounts] = useState<Record<string, ManualLeadCountBreakdown>>({});
 
   const toggleSort = (k: SortKey) => {
     if (sortKey === k) setSortDir(d => d === 'asc' ? 'desc' : 'asc');
@@ -195,6 +199,37 @@ export default function LeadsPage() {
 
   useEffect(() => { load(); }, [load]);
 
+  // WHY: Manual lead counts (parts/service) live in localStorage keyed by org,
+  // shared with the Attribution and dashboard pages which read (but no longer
+  // edit) this same key to fold parts/service leads into ROI/CPL calculations.
+  useEffect(() => {
+    if (!activeOrgId) { setManualLeadCounts({}); return; }
+    const saved = window.localStorage.getItem(`attribution-manual-leads-${activeOrgId}`);
+    if (!saved) { setManualLeadCounts({}); return; }
+    try {
+      setManualLeadCounts(JSON.parse(saved) as Record<string, ManualLeadCountBreakdown>);
+    } catch {
+      window.localStorage.removeItem(`attribution-manual-leads-${activeOrgId}`);
+      setManualLeadCounts({});
+    }
+  }, [activeOrgId]);
+
+  useEffect(() => {
+    if (!activeOrgId) return;
+    window.localStorage.setItem(`attribution-manual-leads-${activeOrgId}`, JSON.stringify(manualLeadCounts));
+  }, [activeOrgId, manualLeadCounts]);
+
+  const updateManualLeadCount = (vendorId: string, field: keyof ManualLeadCountBreakdown, value: string) => {
+    const parsed = Number(value);
+    setManualLeadCounts(prev => ({
+      ...prev,
+      [vendorId]: {
+        parts: field === 'parts' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.parts ?? 0,
+        service: field === 'service' ? (Number.isFinite(parsed) ? parsed : 0) : prev[vendorId]?.service ?? 0,
+      },
+    }));
+  };
+
   const applySearch = (val: string) => { setSearch(val); setPage(0); };
   const applyVin = (val: string) => { setVinSearch(val); setPage(0); };
   const applyVendor = (val: string) => { setVendorFilter(val); setPage(0); };
@@ -229,6 +264,10 @@ export default function LeadsPage() {
       vendor_id: l.vendor_id ?? 'none',
       notes: '',
       stock_number: l.stock_number ?? '',
+      vin: l.vin ?? '',
+      source_label: l.source_label ?? '',
+      type_of_vehicle: l.type_of_vehicle ?? '',
+      type_of_leads: l.type_of_leads ?? '',
     });
     setOpen(true);
   };
@@ -242,11 +281,12 @@ export default function LeadsPage() {
     const normEmail = normalizeEmail(form.customer_email);
     const normPhone = normalizePhone(form.customer_phone);
     const veh = parseVehicle(form.vehicle_of_interest);
+    const vin = form.vin.trim().toUpperCase() || null;
     const hash = await buildDedupHash({
       email: normEmail, phone: normPhone,
       name: normalizeName(fullName),
       vehicle: normalizeName(form.vehicle_of_interest),
-      vin: null, stock_number: form.stock_number.trim() || null,
+      vin, stock_number: form.stock_number.trim() || null,
     });
     const payload = {
       organization_id: activeOrgId,
@@ -259,10 +299,14 @@ export default function LeadsPage() {
       dedup_hash: hash,
       vehicle_of_interest: form.vehicle_of_interest.trim() || null,
       vehicle_year: veh.year, vehicle_make: veh.make, vehicle_model: veh.model,
+      vin,
       lead_date: form.lead_date ? new Date(form.lead_date).toISOString() : new Date().toISOString(),
       lead_status: form.lead_status,
       notes: form.notes.trim() || null,
       stock_number: form.stock_number.trim() || null,
+      source_label: form.source_label.trim() || null,
+      type_of_vehicle: form.type_of_vehicle.trim() || null,
+      type_of_leads: form.type_of_leads.trim() || null,
       manual_override: true,
     };
     const { error } = editing
@@ -475,7 +519,15 @@ export default function LeadsPage() {
                   <div className="grid gap-2"><Label>Phone</Label><Input value={form.customer_phone} onChange={e => setForm({ ...form, customer_phone: e.target.value })} /></div>
                 </div>
                 <div className="grid gap-2"><Label>Vehicle of interest</Label><Input placeholder="2024 Ford F-150" value={form.vehicle_of_interest} onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })} /></div>
-                <div className="grid gap-2"><Label>Stock #</Label><Input placeholder="e.g. STK12345" value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-2"><Label>VIN</Label><Input placeholder="1HGBH41JXMN109186" value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>Stock #</Label><Input placeholder="e.g. STK12345" value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="grid gap-2"><Label>Source</Label><Input placeholder="e.g. AutoTrader" value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>Type of vehicle</Label><Input placeholder="e.g. New / Used" value={form.type_of_vehicle} onChange={e => setForm({ ...form, type_of_vehicle: e.target.value })} /></div>
+                </div>
+                <div className="grid gap-2"><Label>Type of leads</Label><Input placeholder="e.g. Internet / Phone" value={form.type_of_leads} onChange={e => setForm({ ...form, type_of_leads: e.target.value })} /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="grid gap-2"><Label>Lead date</Label><Input type="date" value={form.lead_date} onChange={e => setForm({ ...form, lead_date: e.target.value })} /></div>
                   <div className="grid gap-2">
@@ -506,6 +558,10 @@ export default function LeadsPage() {
           </Dialog>
         </div>
       </div>
+
+      {/* Manual lead counts (parts/service) card hidden for now — behavior is
+          still under review. State/effects below are left in place so any
+          previously-saved counts keep feeding Attribution's calculations. */}
 
       <Card className="overflow-x-hidden">
         <CardHeader>
@@ -596,7 +652,7 @@ export default function LeadsPage() {
                         <TableHead>Type of leads</TableHead>
                         <TableHead>Vendor</TableHead>
                         <SortHeader label="Status" k="lead_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                        <TableHead className="w-24 text-right">Actions</TableHead>
+                        <TableHead className="w-24 text-right sticky right-0 z-20 bg-background shadow-[inset_1px_0_0_hsl(var(--border))]">Actions</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -638,7 +694,7 @@ export default function LeadsPage() {
                               <SelectContent>{STATUS_OPTIONS.map(s => <SelectItem key={s} value={s}>{s}</SelectItem>)}</SelectContent>
                             </Select>
                           </TableCell>
-                          <TableCell className="text-right">
+                          <TableCell className="text-right sticky right-0 bg-background shadow-[inset_1px_0_0_hsl(var(--border))]">
                             <div className="flex justify-end gap-1">
                               {!l.sale_id && (
                                 <Button

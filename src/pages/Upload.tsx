@@ -78,7 +78,7 @@ function normDate(iso: string | null | undefined): string {
 }
 
 // ---------------------------------------------------------------------------
-// Multi-key dedup fingerprints — 8 conditions, all require vendor + date
+// Multi-key dedup fingerprints — all require vendor + date
 //
 // 1. VIN  + vendor + date + name
 // 2. VIN  + vendor + date + phone
@@ -86,8 +86,13 @@ function normDate(iso: string | null | undefined): string {
 // 4. Stock + vendor + date + name
 // 5. Stock + vendor + date + phone
 // 6. Stock + vendor + date + email
-// 7. name  + phone + vendor + date
-// 8. name  + email + vendor + date
+// 7. name  + phone + vendor + date  — only when the row has NO VIN/Stock
+// 8. name  + email + vendor + date  — only when the row has NO VIN/Stock
+//
+// Conditions 7-8 are a fallback for rows with no vehicle identifier at all.
+// A lead with the same name/phone/email but a DIFFERENT VIN or stock# is a
+// separate inquiry (same person asking about a different vehicle), not a
+// duplicate — so 7-8 must not fire once either VIN or stock# is present.
 //
 // A row is a duplicate if ANY fingerprint matches an existing lead in the DB
 // or another row already processed in the same file.
@@ -119,9 +124,13 @@ function buildLeadFingerprints(opts: {
     if (email) keys.push(`stock+vendor+date+email|${stock}|${vendor}|${date}|${email}`);
   }
 
-  // Person-based (conditions 7-8) — fire regardless of VIN/Stock
-  if (name && phone) keys.push(`name+phone+vendor+date|${name}|${phone}|${vendor}|${date}`);
-  if (name && email) keys.push(`name+email+vendor+date|${name}|${email}|${vendor}|${date}`);
+  // Person-based (conditions 7-8) — fallback only: a row with a VIN or stock#
+  // is a specific vehicle inquiry, so name/phone/email alone must not match
+  // it against a different vehicle inquiry from the same person.
+  if (!vin && !stock) {
+    if (name && phone) keys.push(`name+phone+vendor+date|${name}|${phone}|${vendor}|${date}`);
+    if (name && email) keys.push(`name+email+vendor+date|${name}|${email}|${vendor}|${date}`);
+  }
 
   return keys;
 }

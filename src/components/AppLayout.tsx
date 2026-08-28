@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, Receipt, Plug, FileBarChart } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, Receipt, Plug, FileBarChart, GitBranch, Car } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
@@ -21,7 +21,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/leads', label: 'Leads', icon: ListChecks },
     { to: '/sales', label: 'Sales', icon: Receipt },
     { to: '/attribution', label: 'Attribution', icon: TrendingUp },
-    { to: '/reports', label: 'Reports', icon: FileBarChart },
+    { to: '/source-rules', label: 'Source Rules', icon: GitBranch },
+    { to: '/inventory', label: 'Inventory', icon: Car },
     { to: '/integrations', label: 'Integrations', icon: Plug },
   ];
 
@@ -31,7 +32,8 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/leads', label: 'Leads', icon: ListChecks },
     { to: '/sales', label: 'Sales', icon: Receipt },
     { to: '/attribution', label: 'Attribution', icon: TrendingUp },
-    { to: '/reports', label: 'Reports', icon: FileBarChart },
+    { to: '/source-rules', label: 'Source Rules', icon: GitBranch },
+    { to: '/inventory', label: 'Inventory', icon: Car },
     { to: '/integrations', label: 'Integrations', icon: Plug },
   ];
 

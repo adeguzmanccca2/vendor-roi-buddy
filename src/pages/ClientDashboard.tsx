@@ -11,9 +11,14 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import { downloadCsv } from '@/lib/exportCsv';
+import { buildVendorComparisonData, type VendorComparisonSeries } from '@/lib/dashboardCharts';
+import { formatCompactMoney } from '@/lib/utils';
+import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Org { id: string; name: string; slug: string; status: string }
-interface SaleLite { sale_date: string | null; sale_price: number | null }
+interface SaleLite { sale_date: string | null; sale_price: number | null; vendor_id: string | null; lead_id: string | null }
+interface LeadLite { lead_date: string | null; vendor_id: string | null }
+interface VendorLite { id: string; name: string; monthly_cost: number | null }
 interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null }
 
 const fmtMoney = (n: number) =>
@@ -31,12 +36,35 @@ export default function ClientDashboard() {
   const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0 });
   const [vendorCosts, setVendorCosts] = useState<VendorCost[]>([]);
   const [trendSales, setTrendSales] = useState<SaleLite[]>([]);
+  const [trendLeads, setTrendLeads] = useState<LeadLite[]>([]);
+  const [vendors, setVendors] = useState<VendorLite[]>([]);
   const [exportRows, setExportRows] = useState<Record<string, any>[]>([]);
+  const [manualLeadCounts, setManualLeadCounts] = useState<Record<string, ManualLeadCountBreakdown>>({});
 
   // WHY: selectedYear drives all YTD queries. Defaults to current year.
   // When the user picks a different year, the useEffect re-fires and
   // re-fetches all stats for that year's Jan 1 → Dec 31 window.
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+
+  useEffect(() => {
+    if (!activeOrgId) {
+      setManualLeadCounts({});
+      setLoading(false);
+      return;
+    }
+
+    const savedManualCounts = window.localStorage.getItem(`attribution-manual-leads-${activeOrgId}`);
+    if (savedManualCounts) {
+      try {
+        setManualLeadCounts(JSON.parse(savedManualCounts) as Record<string, ManualLeadCountBreakdown>);
+      } catch {
+        window.localStorage.removeItem(`attribution-manual-leads-${activeOrgId}`);
+        setManualLeadCounts({});
+      }
+    } else {
+      setManualLeadCounts({});
+    }
+  }, [activeOrgId]);
 
   useEffect(() => {
     if (!activeOrgId) {
@@ -78,23 +106,27 @@ export default function ClientDashboard() {
         .gte('sale_date', ytdStart)
         .lte('sale_date', ytdEnd),
       // Vendor costs — fetch id + monthly_cost so we can look up first lead date per vendor
-      supabase.from('vendors').select('id, monthly_cost').eq('organization_id', orgId).eq('is_active', true),
+      supabase.from('vendors').select('id, name, monthly_cost').eq('organization_id', orgId).eq('is_active', true),
       // First lead date per vendor — used to calculate months active
       supabase.from('leads').select('vendor_id, lead_date')
         .eq('organization_id', orgId)
         .not('vendor_id', 'is', null)
         .order('lead_date', { ascending: true }),
       // Revenue trend (last 12 months, always current)
-      supabase.from('sales').select('sale_date, sale_price')
+      supabase.from('sales').select('sale_date, sale_price, vendor_id, lead_id')
         .eq('organization_id', orgId)
         .gte('sale_date', trendStart),
+      // Lead counts for comparison (last 12 months)
+      supabase.from('leads').select('lead_date, vendor_id')
+        .eq('organization_id', orgId)
+        .gte('lead_date', trendStart),
       // Leads export (YTD for selected year)
       supabase.from('leads').select('customer_full_name, customer_email, customer_phone, vehicle_of_interest, lead_date, lead_status, vendor_id')
         .eq('organization_id', orgId)
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd)
         .limit(5000),
-    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendRes, leadsExportRes]) => {
+    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes]) => {
       setOrg(orgRes.data ?? null);
       const revenue = (salesRes.data ?? []).reduce(
         (a, s) => a + Number(s.sale_price ?? 0), 0,
@@ -108,20 +140,34 @@ export default function ClientDashboard() {
         }
       }
 
-      // Build VendorCost array with firstLeadDate attached
       const costs: VendorCost[] = (vendorsRes.data ?? []).map((v: any) => ({
         id: v.id,
         monthly_cost: v.monthly_cost,
         firstLeadDate: firstLeadByVendor[v.id] ?? null,
       }));
 
+      const vendorIds = (vendorsRes.data ?? []).map((v: any) => v.id);
+      const fallbackCountsByVendor: Record<string, number> = {};
+      for (const lead of (leadsExportRes.data ?? []) as Array<{ vendor_id: string | null }>) {
+        if (!lead.vendor_id) continue;
+        fallbackCountsByVendor[lead.vendor_id] = (fallbackCountsByVendor[lead.vendor_id] ?? 0) + 1;
+      }
+      const leadCount = resolveLeadTotal({
+        manualLeadCounts,
+        vendorIds,
+        fallbackCountsByVendor,
+        fallbackUnassignedCount: (leadsExportRes.data ?? []).filter((lead: any) => !lead.vendor_id).length,
+      });
+
       setVendorCosts(costs);
-      setStats({ leads: leadsRes.count ?? 0, sales: salesRes.data?.length ?? 0, revenue });
-      setTrendSales((trendRes.data ?? []) as SaleLite[]);
+      setStats({ leads: leadCount, sales: salesRes.data?.length ?? 0, revenue });
+      setTrendSales((trendSalesRes.data ?? []) as SaleLite[]);
+      setTrendLeads((trendLeadsRes.data ?? []) as LeadLite[]);
+      setVendors((vendorsRes.data ?? []) as VendorLite[]);
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
-  }, [activeOrgId, selectedYear]);
+  }, [activeOrgId, manualLeadCounts, selectedYear]);
 
   // WHY: Cost is calculated per vendor based on when they first sent a lead.
   // months_active = months from first lead date to end of selected period.
@@ -180,6 +226,13 @@ export default function ClientDashboard() {
       revenue,
     }));
   }, [trendSales]);
+
+  const comparison = useMemo(() => buildVendorComparisonData({
+    leads: trendLeads,
+    sales: trendSales,
+    vendors,
+    months: 12,
+  }), [trendLeads, trendSales, vendors]);
 
   const exportLeads = () =>
     downloadCsv(`leads-ytd-${selectedYear}-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
@@ -259,7 +312,7 @@ export default function ClientDashboard() {
             <LineChart data={trend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
               <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => `$${(v / 1000).toFixed(0)}k`} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
               <Tooltip
                 formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
                 contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
@@ -267,6 +320,43 @@ export default function ClientDashboard() {
               <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="text-base">Vendor attribution — last 12 months</CardTitle>
+          <p className="text-xs text-muted-foreground">
+            Total attributed sales and total leads, plus a leads breakdown by vendor.
+          </p>
+        </CardHeader>
+        <CardContent>
+          <div className="h-80">
+            <ResponsiveContainer width="100%" height="100%">
+              <LineChart data={comparison.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+                <Tooltip
+                  formatter={(value: any, name: any) => [value, name === 'attributedSales' ? 'Attributed sales' : name]}
+                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+                />
+                {comparison.series.map(series => (
+                  <Line
+                    key={series.key}
+                    type="monotone"
+                    dataKey={series.key}
+                    name={series.label}
+                    stroke={series.color}
+                    strokeWidth={2}
+                    dot={{ r: 2 }}
+                    activeDot={{ r: 4 }}
+                  />
+                ))}
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+          <VendorAttributionLegend series={comparison.series} />
         </CardContent>
       </Card>
 
@@ -282,6 +372,38 @@ export default function ClientDashboard() {
           <p><span className="text-muted-foreground">Status:</span> {org?.status}</p>
         </CardContent>
       </Card>
+    </div>
+  );
+}
+
+function LegendSwatch({ series }: { series: VendorComparisonSeries }) {
+  return (
+    <span className="inline-flex items-center gap-1.5">
+      <span className="inline-block h-2.5 w-2.5 rounded-full" style={{ backgroundColor: series.color }} />
+      {series.label}
+    </span>
+  );
+}
+
+// Totals (attributed sales, total leads) render first; the per-vendor leads
+// breakdown is grouped under its own heading below them, per request.
+function VendorAttributionLegend({ series }: { series: VendorComparisonSeries[] }) {
+  const totals = series.filter(s => s.key === 'attributedSales' || s.key === 'totalLeads');
+  const vendors = series.filter(s => s.key.startsWith('vendor:'));
+
+  return (
+    <div className="mt-3 space-y-2 text-xs">
+      <div className="flex flex-wrap items-center gap-4">
+        {totals.map(s => <LegendSwatch key={s.key} series={s} />)}
+      </div>
+      {vendors.length > 0 && (
+        <div>
+          <p className="mb-1.5 font-medium text-muted-foreground">Leads Breakdown by Vendor</p>
+          <div className="flex flex-wrap items-center gap-4">
+            {vendors.map(s => <LegendSwatch key={s.key} series={s} />)}
+          </div>
+        </div>
+      )}
     </div>
   );
 }

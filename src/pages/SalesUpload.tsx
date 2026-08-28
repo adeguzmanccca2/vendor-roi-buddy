@@ -81,7 +81,7 @@ interface SkippedRow {
   name: string;
   vin: string;
   stock: string;
-  reason: string;        // 'Duplicate within file' | 'Already in database'
+  reason: string;        // 'Duplicate within file'
   matchedOn: 'VIN' | 'Stock#' | 'none';
 }
 
@@ -189,10 +189,11 @@ export default function SalesUploadPage() {
         return (row[col] ?? '').toString().trim();
       };
 
-      // Dedup sets — one per identifier type, scoped to THIS file first,
-      // then checked against the DB. VIN is global-unique; Stock# is unique per org.
-      const seenVins   = new Set<string>(); // tracks VINs seen in this file
-      const seenStocks = new Set<string>(); // tracks Stock#s seen in this file
+      // Dedup sets — scoped to THIS file only. Keyed by identifier + sale date,
+      // so the same VIN/Stock# sold again on a different date is a new sale,
+      // not a duplicate (e.g. a vehicle that comes back and resells later).
+      const seenVins   = new Set<string>(); // "VIN|sale date" seen in this file
+      const seenStocks = new Set<string>(); // "Stock#|sale date" seen in this file
 
       // Rows ready to insert (pending DB dedup check)
       const toInsert: any[] = [];
@@ -224,21 +225,28 @@ export default function SalesUploadPage() {
           const nVin   = normVin(vin);
           const nStock = normStock(stock);
 
-          // ── Within-file dedup ─────────────────────────────────────────────
-          if (nVin && seenVins.has(nVin)) {
+          // Parse the sale date up front — it's part of the dedup key below.
+          const sd = parseLeadDate(get(row, 'sale_date'));
+          const dateKey = (sd ?? '').slice(0, 10); // YYYY-MM-DD, blank if unparsed
+
+          // ── Within-file dedup — same identifier AND same sale date ─────────
+          const vinKey   = nVin   ? `${nVin}|${dateKey}`   : '';
+          const stockKey = nStock ? `${nStock}|${dateKey}` : '';
+
+          if (vinKey && seenVins.has(vinKey)) {
             dupesInBatch++;
             dupesDetail.push({ row: rowIdx + 2, name: fullName, vin, stock, reason: 'Duplicate within file', matchedOn: 'VIN' });
             continue;
           }
-          if (nStock && seenStocks.has(nStock)) {
+          if (stockKey && seenStocks.has(stockKey)) {
             dupesInBatch++;
             dupesDetail.push({ row: rowIdx + 2, name: fullName, vin, stock, reason: 'Duplicate within file', matchedOn: 'Stock#' });
             continue;
           }
 
           // Register both identifiers so later rows in this file can match them
-          if (nVin)   seenVins.add(nVin);
-          if (nStock) seenStocks.add(nStock);
+          if (vinKey)   seenVins.add(vinKey);
+          if (stockKey) seenStocks.add(stockKey);
 
           // Parse remaining fields
           const normPhone = normalizePhone(phone) ?? normalizePhone(get(row, 'work_phone'));
@@ -247,7 +255,6 @@ export default function SalesUploadPage() {
           const veh       = get(row, 'vehicle');
           const parsed    = parseVehicle(veh);
           const { first, last } = splitName(fullName);
-          const sd        = parseLeadDate(get(row, 'sale_date'));
 
           const salePrice = normalizeRevenue(get(row, 'sale_price')) ?? null;
 
@@ -297,63 +304,12 @@ export default function SalesUploadPage() {
       console.log(`[SalesUpload] prepared ${toInsert.length} rows, ${rowErrors.length} empty/errored, ${dupesInBatch} within-file dupes`);
       setRowSkips(rowErrors);
 
-      // ── Step 3: DB dedup — pull existing VINs and Stock#s for this org ──────
-      //
-      // We only need two columns. One query, no chunking needed.
-      // VIN check runs first (priority). Stock# check only fires if row has no VIN.
-      //
-      let existingDupes = 0;
+      // Dedup is scoped to this file only (see the within-file check above) —
+      // we deliberately do not check against sales already in the database.
+      // Strip internal metadata before inserting.
+      const dbRows = toInsert.map(({ __nVin, __nStock, __name, __vinRaw, __stockRaw, ...rest }) => rest);
 
-      setImportStatus('Checking existing sales for duplicates...');
-
-      const { data: existingRows, error: existingErr } = await withTimeout(
-        supabase
-          .from('sales')
-          .select('vin, stock_number')
-          .eq('organization_id', activeOrgId)
-          .limit(10000),
-        'Loading existing sales for dedup',
-        45000,
-      );
-      if (existingErr) throw new Error(`Dedup check failed: ${existingErr.message}`);
-
-      // Build Sets of normalized values already in the DB
-      const dbVins   = new Set<string>();
-      const dbStocks = new Set<string>();
-      for (const r of existingRows ?? []) {
-        const v = normVin(r.vin ?? '');
-        const s = normStock(r.stock_number ?? '');
-        if (v) dbVins.add(v);
-        if (s) dbStocks.add(s);
-      }
-
-      setImportStatus('Filtering duplicates...');
-
-      const cleanRows: any[] = [];
-      for (const r of toInsert) {
-        const nv: string | null = r.__nVin;
-        const ns: string | null = r.__nStock;
-
-        // VIN match — highest priority
-        if (nv && dbVins.has(nv)) {
-          existingDupes++;
-          dupesDetail.push({ row: 0, name: r.__name, vin: r.__vinRaw, stock: r.__stockRaw, reason: 'Already in database', matchedOn: 'VIN' });
-          continue;
-        }
-        // Stock# match — checked independently (not gated on missing VIN)
-        if (ns && dbStocks.has(ns)) {
-          existingDupes++;
-          dupesDetail.push({ row: 0, name: r.__name, vin: r.__vinRaw, stock: r.__stockRaw, reason: 'Already in database', matchedOn: 'Stock#' });
-          continue;
-        }
-
-        cleanRows.push(r);
-      }
-
-      // Strip internal metadata before inserting
-      const dbRows = cleanRows.map(({ __nVin, __nStock, __name, __vinRaw, __stockRaw, ...rest }) => rest);
-
-      // ── Step 4: Insert clean rows in chunks ────────────────────────────────
+      // ── Step 3: Insert clean rows in chunks ────────────────────────────────
       let inserted = 0;
       const CHUNK = 25;
 
@@ -375,9 +331,9 @@ export default function SalesUploadPage() {
         inserted += slice.length;
       }
 
-      // ── Step 5: Update upload record with final counts ─────────────────────
+      // ── Step 4: Update upload record with final counts ─────────────────────
       setImportStatus('Finalizing import...');
-      const totalDupes = dupesInBatch + existingDupes;
+      const totalDupes = dupesInBatch;
       const { error: updateErr } = await withTimeout(
         supabase.from('raw_sales_uploads').update({
           inserted_count:  inserted,
@@ -409,7 +365,7 @@ export default function SalesUploadPage() {
       <div>
         <h1 className="text-2xl font-bold text-foreground">Upload Sales (CSV)</h1>
         <p className="text-sm text-muted-foreground">
-          For {activeOrg?.name}. Import CRM/DMS sales — duplicates skipped automatically.
+          For {activeOrg?.name}. Import CRM/DMS sales — duplicate rows within the same file are skipped automatically.
         </p>
       </div>
 
