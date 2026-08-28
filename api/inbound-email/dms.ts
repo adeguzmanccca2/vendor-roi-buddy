@@ -44,7 +44,14 @@ import {
   parseVehicle,
   splitName,
   buildDedupHash,
-} from '../../src/lib/normalize';
+// WHY the .js extension on a .ts source file: this function runs under
+// Node's native ESM loader on Vercel (package.json has "type": "module")
+// rather than being bundled into a single file, so relative imports are
+// resolved by Node at runtime against the compiled output — which is
+// .js — not by TypeScript at build time. Omitting the extension caused
+// ERR_MODULE_NOT_FOUND in production even though local dev/typecheck
+// didn't catch it.
+} from '../../src/lib/normalize.js';
 
 // ----------------------------------------------------------------------------
 // Postmark inbound payload (subset of fields we actually use)
