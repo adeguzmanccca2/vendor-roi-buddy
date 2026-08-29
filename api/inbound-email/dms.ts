@@ -105,6 +105,7 @@ interface EmailCredential {
   id: string;
   organization_id: string;
   sale_count: number;
+  lead_count: number;
   location_label: string | null;
 }
 
@@ -200,6 +201,69 @@ async function mapSaleRow(row: Record<string, unknown>, organizationId: string) 
     manual_override: false,
     dedup_hash: dedupHash,
   };
+}
+
+// WHY plain fields, no dedup_hash: mirrors receive-leads/index.ts's mapLead
+// exactly — leads has no unique constraint to upsert against (idx_leads_dedup
+// is a plain, non-unique index), so re-sending the same leads file will
+// insert duplicate rows. That's an existing limitation of the leads path in
+// general (the API-key webhook has the same behavior), not something new
+// introduced here.
+async function mapLeadRow(row: Record<string, unknown>, organizationId: string) {
+  const firstName = pick(row, 'first_name', 'customer_first_name');
+  const lastName = pick(row, 'last_name', 'customer_last_name');
+  const fullName = pick(row, 'full_name', 'name', 'customer_full_name', 'customer_name') ??
+    ([firstName, lastName].filter(Boolean).join(' ') || null);
+  const email = pick(row, 'email', 'customer_email', 'email_address');
+  const phone = pick(row, 'phone', 'customer_phone', 'cell_phone', 'mobile');
+  const yearRaw = pick(row, 'vehicle_year', 'year');
+  const leadDateRaw = pick(row, 'lead_date', 'date');
+
+  return {
+    organization_id: organizationId,
+    customer_first_name: firstName,
+    customer_last_name: lastName,
+    customer_full_name: fullName,
+    customer_email: email,
+    customer_phone: phone,
+    normalized_email: normalizeEmail(email),
+    normalized_phone: normalizePhone(phone),
+    vin: pick(row, 'vin'),
+    stock_number: pick(row, 'stock_number', 'stock', 'stock_no'),
+    vehicle_year: yearRaw != null ? (Number(yearRaw) || null) : null,
+    vehicle_make: pick(row, 'vehicle_make', 'make'),
+    vehicle_model: pick(row, 'vehicle_model', 'model'),
+    vehicle_of_interest: pick(row, 'vehicle_of_interest', 'vehicle'),
+    source_label: pick(row, 'source', 'source_label', 'lead_source'),
+    notes: pick(row, 'notes', 'comments', 'description'),
+    lead_date: parseLeadDate(leadDateRaw),
+    lead_status: 'new',
+  };
+}
+
+// WHY one shared insert helper for both tables: sales dedupes via upsert
+// against idx_sales_dedup (organization_id, dedup_hash); leads has no such
+// constraint, so it's a plain insert (see mapLeadRow's comment above). This
+// keeps that difference in exactly one place instead of duplicating the
+// single-location/multi-location branching below per table.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function insertMappedRows(
+  admin: any,
+  targetTable: 'sales' | 'leads',
+  mappedRows: Record<string, unknown>[],
+): Promise<{ rowsImported: number; duplicatesSkipped: number; error: string | null }> {
+  if (targetTable === 'leads') {
+    const { data, error } = await admin.from('leads').insert(mappedRows).select('id');
+    if (error) return { rowsImported: 0, duplicatesSkipped: 0, error: error.message };
+    return { rowsImported: data?.length ?? 0, duplicatesSkipped: 0, error: null };
+  }
+  const { data, error } = await admin
+    .from('sales')
+    .upsert(mappedRows, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
+    .select('id');
+  if (error) return { rowsImported: 0, duplicatesSkipped: 0, error: error.message };
+  const rowsImported = data?.length ?? 0;
+  return { rowsImported, duplicatesSkipped: mappedRows.length - rowsImported, error: null };
 }
 
 // ----------------------------------------------------------------------------
@@ -334,7 +398,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const { data: credsData, error: credErr } = domain
     ? await admin
         .from('api_credentials')
-        .select('id, organization_id, sale_count, location_label')
+        .select('id, organization_id, sale_count, lead_count, location_label')
         .eq('sender_domain', domain)
         .eq('is_active', true)
     : { data: null, error: null };
@@ -414,10 +478,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // ---- Step 4: run the import pipeline -----------------------------------
+  // Which table a file targets is decided by its filename: "lead" (case-
+  // insensitive) anywhere in the attachment name means leads, otherwise
+  // sales. DMS exports already tend to have descriptive filenames
+  // ("daily_leads_export.csv" vs "sales_export.xlsx"), so this needs no
+  // extra convention from the dealership's IT team.
+  //
   // Single-location domain: every row maps to that one org (unchanged
   // behavior). Multi-location domain: each row must carry a 'location'
   // value matching one credential's location_label; rows with no match
   // are rejected rather than silently routed to the wrong dealership.
+  const isLeadsFile = /lead/i.test(attachment.Name ?? '');
+  const targetTable: 'sales' | 'leads' = isLeadsFile ? 'leads' : 'sales';
+  const mapRow = isLeadsFile ? mapLeadRow : mapSaleRow;
+
   interface OrgResult { rowsImported: number; duplicatesSkipped: number; errors: string[] }
   const resultsByCredId = new Map<string, OrgResult>();
   for (const c of creds) resultsByCredId.set(c.id, { rowsImported: 0, duplicatesSkipped: 0, errors: [] });
@@ -431,25 +505,19 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     if (normalizedRows.length === 0) {
       resultsByCredId.get(creds[0].id)!.errors.push('Attachment parsed but contained 0 rows');
     } else if (!multiLocation) {
-      const mappedRows = await Promise.all(normalizedRows.map(r => mapSaleRow(r, creds[0].organization_id)));
+      const mappedRows = await Promise.all(normalizedRows.map(r => mapRow(r, creds[0].organization_id)));
       const result = resultsByCredId.get(creds[0].id)!;
-      // Same dedup strategy as receive-sales: upsert on the
-      // (organization_id, dedup_hash) unique index so re-sending the same
-      // file (or a file with overlapping rows from a prior run) is a safe
-      // no-op instead of creating duplicate sales.
-      const { data: upserted, error: upsertErr } = await admin
-        .from('sales')
-        .upsert(mappedRows, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
-        .select('id');
-      if (upsertErr) {
-        result.errors.push(upsertErr.message);
+      const { rowsImported, duplicatesSkipped, error } = await insertMappedRows(admin, targetTable, mappedRows);
+      if (error) {
+        result.errors.push(error);
       } else {
-        result.rowsImported = upserted?.length ?? 0;
-        result.duplicatesSkipped = mappedRows.length - result.rowsImported;
+        result.rowsImported = rowsImported;
+        result.duplicatesSkipped = duplicatesSkipped;
       }
     } else {
-      // Group rows by matched credential/location, then upsert per org so
-      // one bad row in one location can't block the other location's rows.
+      // Group rows by matched credential/location, then insert/upsert per
+      // org so one bad row in one location can't block the other
+      // location's rows.
       const rowsByCredId = new Map<string, Record<string, unknown>[]>();
       for (const c of creds) rowsByCredId.set(c.id, []);
       const knownLocations = creds.map(c => c.location_label).filter(Boolean).join(', ');
@@ -469,17 +537,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       for (const c of creds) {
         const rows = rowsByCredId.get(c.id)!;
         if (rows.length === 0) continue;
-        const mappedRows = await Promise.all(rows.map(r => mapSaleRow(r, c.organization_id)));
+        const mappedRows = await Promise.all(rows.map(r => mapRow(r, c.organization_id)));
         const result = resultsByCredId.get(c.id)!;
-        const { data: upserted, error: upsertErr } = await admin
-          .from('sales')
-          .upsert(mappedRows, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
-          .select('id');
-        if (upsertErr) {
-          result.errors.push(upsertErr.message);
+        const { rowsImported, duplicatesSkipped, error } = await insertMappedRows(admin, targetTable, mappedRows);
+        if (error) {
+          result.errors.push(error);
         } else {
-          result.rowsImported = upserted?.length ?? 0;
-          result.duplicatesSkipped = mappedRows.length - result.rowsImported;
+          result.rowsImported = rowsImported;
+          result.duplicatesSkipped = duplicatesSkipped;
         }
       }
     }
@@ -488,14 +553,25 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   }
 
   // Attribute + update usage stats only for orgs that actually got rows.
+  // Leads don't get attributed (only sales do); a fresh lead can still
+  // retroactively match an existing unmatched sale next time
+  // attribute_sales_for_org runs for that org, so nothing extra is needed
+  // here for that case.
   for (const c of creds) {
     const result = resultsByCredId.get(c.id)!;
     if (result.rowsImported > 0) {
-      await admin.rpc('attribute_sales_for_org', { _org_id: c.organization_id });
-      await admin
-        .from('api_credentials')
-        .update({ last_used_at: new Date().toISOString(), sale_count: c.sale_count + result.rowsImported })
-        .eq('id', c.id);
+      if (isLeadsFile) {
+        await admin
+          .from('api_credentials')
+          .update({ last_used_at: new Date().toISOString(), lead_count: c.lead_count + result.rowsImported })
+          .eq('id', c.id);
+      } else {
+        await admin.rpc('attribute_sales_for_org', { _org_id: c.organization_id });
+        await admin
+          .from('api_credentials')
+          .update({ last_used_at: new Date().toISOString(), sale_count: c.sale_count + result.rowsImported })
+          .eq('id', c.id);
+      }
     }
   }
 
