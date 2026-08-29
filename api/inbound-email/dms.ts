@@ -203,12 +203,13 @@ async function mapSaleRow(row: Record<string, unknown>, organizationId: string) 
   };
 }
 
-// WHY plain fields, no dedup_hash: mirrors receive-leads/index.ts's mapLead
-// exactly — leads has no unique constraint to upsert against (idx_leads_dedup
-// is a plain, non-unique index), so re-sending the same leads file will
-// insert duplicate rows. That's an existing limitation of the leads path in
-// general (the API-key webhook has the same behavior), not something new
-// introduced here.
+// WHY dedup_hash computed here too: mirrors receive-leads/index.ts's mapLead
+// — idx_leads_dedup is now a unique index (see migration
+// 20260829010000_leads_dedup_unique_index.sql), same upsert-on-conflict
+// pattern as sales. This only affects the automated paths (this route,
+// receive-leads); the manual CSV-upload page never sets dedup_hash and has
+// its own richer client-side fingerprint/review logic (Upload.tsx),
+// untouched by this.
 async function mapLeadRow(row: Record<string, unknown>, organizationId: string) {
   const firstName = pick(row, 'first_name', 'customer_first_name');
   const lastName = pick(row, 'last_name', 'customer_last_name');
@@ -218,6 +219,27 @@ async function mapLeadRow(row: Record<string, unknown>, organizationId: string) 
   const phone = pick(row, 'phone', 'customer_phone', 'cell_phone', 'mobile');
   const yearRaw = pick(row, 'vehicle_year', 'year');
   const leadDateRaw = pick(row, 'lead_date', 'date');
+  const vin = pick(row, 'vin');
+  const stockNumber = pick(row, 'stock_number', 'stock', 'stock_no');
+  const vehicleYear = yearRaw != null ? (Number(yearRaw) || null) : null;
+  const vehicleMake = pick(row, 'vehicle_make', 'make');
+  const vehicleModel = pick(row, 'vehicle_model', 'model');
+  const leadDate = parseLeadDate(leadDateRaw);
+
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPhone = normalizePhone(phone);
+  const nameKey = (fullName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const vehicleKey = [vehicleYear, vehicleMake, vehicleModel].filter(Boolean).join(' ');
+
+  const dedupHash = await buildDedupHash({
+    email: normalizedEmail,
+    phone: normalizedPhone,
+    name: nameKey,
+    vehicle: vehicleKey,
+    vin,
+    stock_number: stockNumber,
+    lead_date: leadDate,
+  });
 
   return {
     organization_id: organizationId,
@@ -226,39 +248,33 @@ async function mapLeadRow(row: Record<string, unknown>, organizationId: string) 
     customer_full_name: fullName,
     customer_email: email,
     customer_phone: phone,
-    normalized_email: normalizeEmail(email),
-    normalized_phone: normalizePhone(phone),
-    vin: pick(row, 'vin'),
-    stock_number: pick(row, 'stock_number', 'stock', 'stock_no'),
-    vehicle_year: yearRaw != null ? (Number(yearRaw) || null) : null,
-    vehicle_make: pick(row, 'vehicle_make', 'make'),
-    vehicle_model: pick(row, 'vehicle_model', 'model'),
+    normalized_email: normalizedEmail,
+    normalized_phone: normalizedPhone,
+    vin,
+    stock_number: stockNumber,
+    vehicle_year: vehicleYear,
+    vehicle_make: vehicleMake,
+    vehicle_model: vehicleModel,
     vehicle_of_interest: pick(row, 'vehicle_of_interest', 'vehicle'),
     source_label: pick(row, 'source', 'source_label', 'lead_source'),
     notes: pick(row, 'notes', 'comments', 'description'),
-    lead_date: parseLeadDate(leadDateRaw),
+    lead_date: leadDate,
     lead_status: 'new',
+    dedup_hash: dedupHash,
   };
 }
 
-// WHY one shared insert helper for both tables: sales dedupes via upsert
-// against idx_sales_dedup (organization_id, dedup_hash); leads has no such
-// constraint, so it's a plain insert (see mapLeadRow's comment above). This
-// keeps that difference in exactly one place instead of duplicating the
-// single-location/multi-location branching below per table.
+// WHY one shared insert helper: both tables now dedupe the same way (upsert
+// on (organization_id, dedup_hash) against a unique index) — see
+// idx_sales_dedup and idx_leads_dedup.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 async function insertMappedRows(
   admin: any,
   targetTable: 'sales' | 'leads',
   mappedRows: Record<string, unknown>[],
 ): Promise<{ rowsImported: number; duplicatesSkipped: number; error: string | null }> {
-  if (targetTable === 'leads') {
-    const { data, error } = await admin.from('leads').insert(mappedRows).select('id');
-    if (error) return { rowsImported: 0, duplicatesSkipped: 0, error: error.message };
-    return { rowsImported: data?.length ?? 0, duplicatesSkipped: 0, error: null };
-  }
   const { data, error } = await admin
-    .from('sales')
+    .from(targetTable)
     .upsert(mappedRows, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
     .select('id');
   if (error) return { rowsImported: 0, duplicatesSkipped: 0, error: error.message };

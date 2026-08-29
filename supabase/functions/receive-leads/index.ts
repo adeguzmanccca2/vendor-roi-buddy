@@ -27,7 +27,32 @@ function pick(...args: (string | null | undefined)[]): string | null {
   return null;
 }
 
-function mapLead(raw: Record<string, unknown>, organizationId: string) {
+// Same dedup key shape as src/lib/normalize.ts's buildDedupHash — duplicated
+// here because Deno edge functions can't import from src/. Keep in sync.
+async function buildDedupHash(parts: {
+  email: string | null;
+  phone: string | null;
+  name: string;
+  vehicle: string;
+  vin?: string | null;
+  stock_number?: string | null;
+  lead_date?: string | null;
+}): Promise<string> {
+  const key = [
+    parts.email ?? '',
+    parts.phone ?? '',
+    parts.name,
+    parts.vehicle,
+    (parts.vin ?? '').trim().toUpperCase(),
+    (parts.stock_number ?? '').trim().toUpperCase(),
+    (parts.lead_date ?? '').trim(),
+  ].join('|');
+  const buf = new TextEncoder().encode(key);
+  const hash = await crypto.subtle.digest('SHA-256', buf);
+  return Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
+async function mapLead(raw: Record<string, unknown>, organizationId: string) {
   const firstName = pick(raw.first_name as string, raw.firstName as string, raw.customer_first_name as string);
   const lastName  = pick(raw.last_name  as string, raw.lastName  as string, raw.customer_last_name  as string);
   const fullName  = pick(raw.full_name  as string, raw.fullName  as string, raw.name as string, raw.customer_full_name as string) ??
@@ -36,6 +61,27 @@ function mapLead(raw: Record<string, unknown>, organizationId: string) {
   const phone = pick(raw.phone as string, raw.customer_phone as string, raw.cell_phone as string, raw.cellPhone as string, raw.mobile as string);
   const yearRaw = raw.vehicle_year ?? raw.year ?? raw.vehicleYear;
   const leadDateRaw = pick(raw.lead_date as string, raw.leadDate as string, raw.date as string, raw.created_at as string);
+  const vin = pick(raw.vin as string, raw.VIN as string);
+  const stockNumber = pick(raw.stock_number as string, raw.stockNumber as string, raw.stock as string);
+  const vehicleYear = yearRaw != null ? (Number(yearRaw) || null) : null;
+  const vehicleMake = pick(raw.vehicle_make as string, raw.make as string, raw.vehicleMake as string);
+  const vehicleModel = pick(raw.vehicle_model as string, raw.model as string, raw.vehicleModel as string);
+  const leadDate = leadDateRaw ? (() => { try { return new Date(leadDateRaw).toISOString(); } catch { return null; } })() : null;
+
+  const normalizedEmail = normalizeEmail(email);
+  const normalizedPhone = normalizePhone(phone);
+  const nameKey = (fullName ?? '').trim().toLowerCase().replace(/\s+/g, ' ');
+  const vehicleKey = [vehicleYear, vehicleMake, vehicleModel].filter(Boolean).join(' ');
+
+  const dedupHash = await buildDedupHash({
+    email: normalizedEmail,
+    phone: normalizedPhone,
+    name: nameKey,
+    vehicle: vehicleKey,
+    vin,
+    stock_number: stockNumber,
+    lead_date: leadDate,
+  });
 
   return {
     organization_id:    organizationId,
@@ -44,18 +90,19 @@ function mapLead(raw: Record<string, unknown>, organizationId: string) {
     customer_full_name:  fullName,
     customer_email:      email,
     customer_phone:      phone,
-    normalized_email:    normalizeEmail(email),
-    normalized_phone:    normalizePhone(phone),
-    vin:           pick(raw.vin as string, raw.VIN as string),
-    stock_number:  pick(raw.stock_number as string, raw.stockNumber as string, raw.stock as string),
-    vehicle_year:  yearRaw != null ? (Number(yearRaw) || null) : null,
-    vehicle_make:  pick(raw.vehicle_make as string, raw.make as string, raw.vehicleMake as string),
-    vehicle_model: pick(raw.vehicle_model as string, raw.model as string, raw.vehicleModel as string),
+    normalized_email:    normalizedEmail,
+    normalized_phone:    normalizedPhone,
+    vin,
+    stock_number:  stockNumber,
+    vehicle_year:  vehicleYear,
+    vehicle_make:  vehicleMake,
+    vehicle_model: vehicleModel,
     vehicle_of_interest: pick(raw.vehicle_of_interest as string, raw.vehicleOfInterest as string, raw.vehicle as string),
     source_label:  pick(raw.source as string, raw.source_label as string, raw.sourceLabel as string, raw.lead_source as string, raw.leadSource as string),
     notes:         pick(raw.notes as string, raw.comments as string, raw.description as string),
-    lead_date:     leadDateRaw ? (() => { try { return new Date(leadDateRaw).toISOString(); } catch { return null; } })() : null,
+    lead_date:     leadDate,
     lead_status:   'new',
+    dedup_hash:    dedupHash,
   };
 }
 
@@ -97,22 +144,31 @@ Deno.serve(async (req) => {
   if (raw.length === 0) return json({ error: 'No leads provided' }, 400);
   if (raw.length > 500) return json({ error: 'Maximum 500 leads per request' }, 400);
 
-  const leads = raw.map(l => mapLead(l, cred.organization_id));
+  const leads = await Promise.all(raw.map(l => mapLead(l, cred.organization_id)));
 
-  const { data: inserted, error: insertErr } = await admin
+  // Upsert on the (organization_id, dedup_hash) unique index, same pattern
+  // as receive-sales, so re-sending the same lead (or an overlapping batch
+  // across two calls) is a safe no-op instead of creating duplicates.
+  const { data: upserted, error: upsertErr } = await admin
     .from('leads')
-    .insert(leads)
+    .upsert(leads, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
     .select('id');
 
-  if (insertErr) return json({ error: insertErr.message }, 500);
+  if (upsertErr) return json({ error: upsertErr.message }, 500);
 
-  const count = inserted?.length ?? 0;
+  const count = upserted?.length ?? 0;
   await admin.from('api_credentials').update({
     last_used_at: new Date().toISOString(),
     lead_count: cred.lead_count + count,
   }).eq('id', cred.id);
 
-  return json({ success: true, inserted: count, ids: inserted?.map(r => r.id) ?? [] });
+  return json({
+    success: true,
+    received: raw.length,
+    inserted: count,
+    duplicates: raw.length - count,
+    ids: upserted?.map(r => r.id) ?? [],
+  });
 });
 
 function json(payload: unknown, status = 200) {
