@@ -217,7 +217,14 @@ function parseAttachmentRows(filename: string, buffer: Buffer): Record<string, u
     return result.data;
   }
   // .xlsx / .xls
-  const workbook = XLSX.read(buffer, { type: 'buffer' });
+  // WHY cellDates: true — without it, date-formatted cells come through as
+  // raw Excel serial numbers (e.g. 46258) instead of JS Date objects. pick()
+  // stringifies whatever it's given, so a serial number becomes the literal
+  // string "46258", which new Date("46258") misparses as the year 46258
+  // instead of a real calendar date (confirmed in production: Postgres
+  // rejected the resulting far-future timestamp outright). A Date object
+  // stringifies to a real date string that Date() can correctly re-parse.
+  const workbook = XLSX.read(buffer, { type: 'buffer', cellDates: true });
   const firstSheetName = workbook.SheetNames[0];
   if (!firstSheetName) return [];
   const sheet = workbook.Sheets[firstSheetName];
