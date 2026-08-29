@@ -1,12 +1,13 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation } from 'react-router-dom';
-import { Building2, LayoutDashboard, UserPlus } from 'lucide-react';
+import { Building2, LayoutDashboard, UserPlus, FileClock } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const tabs = [
   { to: '/admin/portal', label: 'Overview', icon: LayoutDashboard, end: true },
   { to: '/admin/portal/dealerships', label: 'Dealerships', icon: Building2 },
   { to: '/admin/portal/dealerships/new', label: 'Add Dealership', icon: UserPlus },
+  { to: '/admin/portal/dms-logs', label: 'Import Logs', icon: FileClock },
 ];
 
 export default function PortalLayout({ children }: { children: ReactNode }) {

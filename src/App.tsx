@@ -27,6 +27,7 @@ import DealershipsList from '@/pages/admin/portal/DealershipsList';
 import DealershipNew from '@/pages/admin/portal/DealershipNew';
 import DealershipDetail from '@/pages/admin/portal/DealershipDetail';
 import DealershipEdit from '@/pages/admin/portal/DealershipEdit';
+import DmsImportLogs from '@/pages/admin/portal/DmsImportLogs';
 import IntegrationsPage from '@/pages/Integrations';
 import ReportsPage from '@/pages/Reports';
 import NotFound from '@/pages/NotFound';
@@ -173,6 +174,14 @@ const App = () => (
                 element={
                   <ProtectedRoute requireRole="admin">
                     <AppLayout><DealershipEdit /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/admin/portal/dms-logs"
+                element={
+                  <ProtectedRoute requireRole="admin">
+                    <AppLayout><DmsImportLogs /></AppLayout>
                   </ProtectedRoute>
                 }
               />
