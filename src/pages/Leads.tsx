@@ -518,16 +518,16 @@ export default function LeadsPage() {
                   <div className="grid gap-2"><Label>Email</Label><Input value={form.customer_email} onChange={e => setForm({ ...form, customer_email: e.target.value })} /></div>
                   <div className="grid gap-2"><Label>Phone</Label><Input value={form.customer_phone} onChange={e => setForm({ ...form, customer_phone: e.target.value })} /></div>
                 </div>
-                <div className="grid gap-2"><Label>Vehicle of interest</Label><Input placeholder="2024 Ford F-150" value={form.vehicle_of_interest} onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })} /></div>
+                <div className="grid gap-2"><Label>Vehicle of interest</Label><Input value={form.vehicle_of_interest} onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })} /></div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2"><Label>VIN</Label><Input placeholder="e.g. 1HGBH41JXMN109186" value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} /></div>
-                  <div className="grid gap-2"><Label>Stock #</Label><Input placeholder="e.g. STK12345" value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>VIN</Label><Input value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>Stock #</Label><Input value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2"><Label>Source</Label><Input placeholder="e.g. AutoTrader" value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} /></div>
-                  <div className="grid gap-2"><Label>Type of vehicle</Label><Input placeholder="e.g. New / Used" value={form.type_of_vehicle} onChange={e => setForm({ ...form, type_of_vehicle: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>Source</Label><Input value={form.source_label} onChange={e => setForm({ ...form, source_label: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>Type of vehicle</Label><Input value={form.type_of_vehicle} onChange={e => setForm({ ...form, type_of_vehicle: e.target.value })} /></div>
                 </div>
-                <div className="grid gap-2"><Label>Type of leads</Label><Input placeholder="e.g. Internet / Phone" value={form.type_of_leads} onChange={e => setForm({ ...form, type_of_leads: e.target.value })} /></div>
+                <div className="grid gap-2"><Label>Type of leads</Label><Input value={form.type_of_leads} onChange={e => setForm({ ...form, type_of_leads: e.target.value })} /></div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="grid gap-2"><Label>Lead date</Label><Input type="date" value={form.lead_date} onChange={e => setForm({ ...form, lead_date: e.target.value })} /></div>
                   <div className="grid gap-2">
