@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { Link } from 'react-router-dom';
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -20,7 +21,6 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   LineChart, Line, Cell, Legend,
 } from 'recharts';
-import { AttributionOverrideDialog } from '@/components/AttributionOverrideDialog';
 import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
@@ -208,8 +208,6 @@ export default function AttributionPage() {
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [customFrom, setCustomFrom] = useState('');
   const [customTo, setCustomTo] = useState('');
-  const [overrideSale, setOverrideSale] = useState<SaleRow | null>(null);
-  const [overrideOpen, setOverrideOpen] = useState(false);
   const [vendorSalesView, setVendorSalesView] = useState<{ id: string | null; name: string } | null>(null);
   const [vendorLeadsView, setVendorLeadsView] = useState<{ id: string | null; name: string } | null>(null);
   const [leads, setLeads] = useState<LeadRow[]>([]);
@@ -299,6 +297,29 @@ export default function AttributionPage() {
   };
 
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeOrgId, period]);
+
+  // Default the month picker to whichever month most recently had leads or
+  // sales LOADED (created_at, not lead_date/sale_date) — otherwise the page
+  // defaults to the current calendar month and looks empty until this
+  // month's data has actually been imported. Runs once per org; doesn't
+  // fight with the user manually changing the period afterward.
+  const defaultPeriodOrgRef = useRef<string | null>(null);
+  useEffect(() => {
+    if (!activeOrgId || defaultPeriodOrgRef.current === activeOrgId) return;
+    defaultPeriodOrgRef.current = activeOrgId;
+    (async () => {
+      const [{ data: lastLead }, { data: lastSale }] = await Promise.all([
+        supabase.from('leads').select('created_at').eq('organization_id', activeOrgId)
+          .order('created_at', { ascending: false }).limit(1),
+        supabase.from('sales').select('created_at').eq('organization_id', activeOrgId)
+          .order('created_at', { ascending: false }).limit(1),
+      ]);
+      const candidates = [lastLead?.[0]?.created_at, lastSale?.[0]?.created_at].filter(Boolean) as string[];
+      if (candidates.length === 0) return;
+      const latest = new Date(candidates.reduce((a, b) => (a > b ? a : b)));
+      setPeriod(`m:${latest.getFullYear()}-${String(latest.getMonth() + 1).padStart(2, '0')}`);
+    })();
+  }, [activeOrgId]);
 
   // Manual lead counts (parts/service) are edited on the Leads page; this page
   // only reads them, keyed by org, to fold into lead/CPL calculations below.
@@ -527,6 +548,11 @@ export default function AttributionPage() {
           <Button variant="outline" onClick={exportSales}>
             <Download className="mr-1 h-4 w-4" /> Sales
           </Button>
+          <Button variant="outline" asChild>
+            <Link to="/attribution/fix">
+              <Pencil className="mr-1 h-4 w-4" /> Fix Attribution
+            </Link>
+          </Button>
         </div>
       </div>
 
@@ -717,58 +743,6 @@ export default function AttributionPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader><CardTitle className="text-base">Recent sales ({sales.length})</CardTitle></CardHeader>
-        <CardContent className="overflow-x-auto p-0">
-          {sales.length === 0 ? (
-            <p className="p-6 text-sm text-muted-foreground">No sales imported yet for this period.</p>
-          ) : (
-            <table className="w-full text-sm">
-              <thead className="border-b bg-muted/40 text-xs uppercase text-muted-foreground">
-                <tr>
-                  <th className="px-4 py-2 text-left">Customer</th>
-                  <th className="px-4 py-2 text-left">Vehicle</th>
-                  <th className="px-4 py-2 text-left">Date</th>
-                  <th className="px-4 py-2 text-right">Gross</th>
-                  <th className="px-4 py-2 text-center">Attribution</th>
-                  <th className="px-4 py-2 text-center"></th>
-                </tr>
-              </thead>
-              <tbody>
-                {sales.slice(0, 100).map(s => (
-                  <tr key={s.id} className="border-b">
-                    <td className="px-4 py-2">{s.customer_full_name ?? '—'}</td>
-                    <td className="px-4 py-2 text-muted-foreground">
-                      {[s.vehicle_year, s.vehicle_make, s.vehicle_model].filter(Boolean).join(' ') || '—'}
-                    </td>
-                    <td className="px-4 py-2 text-muted-foreground">
-                      {s.sale_date ? new Date(s.sale_date).toLocaleDateString() : '—'}
-                    </td>
-                    <td className="px-4 py-2 text-right">{fmtMoney(saleRevenue(s))}</td>
-                    <td className="px-4 py-2 text-center">
-                      <AttributionBadge status={s.attribution_status} confidence={s.attribution_confidence ?? 0} manual={s.manual_override} />
-                    </td>
-                    <td className="px-4 py-2 text-center">
-                      <Button variant="ghost" size="sm" onClick={() => { setOverrideSale(s); setOverrideOpen(true); }}>
-                        <Pencil className="h-3.5 w-3.5" />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          )}
-        </CardContent>
-      </Card>
-
-      <AttributionOverrideDialog
-        sale={overrideSale}
-        vendors={vendors}
-        open={overrideOpen}
-        onOpenChange={setOverrideOpen}
-        onSaved={load}
-      />
-
       <Dialog open={!!vendorSalesView} onOpenChange={(o) => !o && setVendorSalesView(null)}>
         <DialogContent className="max-w-4xl">
           {vendorSalesView ? (() => {
@@ -957,7 +931,7 @@ function CategoryBadge({ cat }: { cat: VendorPerf['category'] }) {
   return <Badge variant="outline">—</Badge>;
 }
 
-function AttributionBadge({ status, confidence, manual }: { status: string; confidence: number; manual: boolean }) {
+export function AttributionBadge({ status, confidence, manual }: { status: string; confidence: number; manual: boolean }) {
   if (manual) return <Badge>Manual · 100%</Badge>;
   if (status === 'auto') return <Badge className="bg-blue-600 hover:bg-blue-700">Auto · {confidence}%</Badge>;
   if (status === 'none') return <Badge variant="outline">No match</Badge>;
