@@ -520,7 +520,7 @@ export default function LeadsPage() {
                 </div>
                 <div className="grid gap-2"><Label>Vehicle of interest</Label><Input placeholder="2024 Ford F-150" value={form.vehicle_of_interest} onChange={e => setForm({ ...form, vehicle_of_interest: e.target.value })} /></div>
                 <div className="grid grid-cols-2 gap-3">
-                  <div className="grid gap-2"><Label>VIN</Label><Input placeholder="1HGBH41JXMN109186" value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} /></div>
+                  <div className="grid gap-2"><Label>VIN</Label><Input placeholder="e.g. 1HGBH41JXMN109186" value={form.vin} onChange={e => setForm({ ...form, vin: e.target.value })} /></div>
                   <div className="grid gap-2"><Label>Stock #</Label><Input placeholder="e.g. STK12345" value={form.stock_number} onChange={e => setForm({ ...form, stock_number: e.target.value })} /></div>
                 </div>
                 <div className="grid grid-cols-2 gap-3">
