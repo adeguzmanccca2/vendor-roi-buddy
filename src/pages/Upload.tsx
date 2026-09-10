@@ -86,13 +86,20 @@ function normDate(iso: string | null | undefined): string {
 // 4. Stock + vendor + date + name
 // 5. Stock + vendor + date + phone
 // 6. Stock + vendor + date + email
-// 7. name  + phone + vendor + date  — only when the row has NO VIN/Stock
-// 8. name  + email + vendor + date  — only when the row has NO VIN/Stock
+// 7. name + phone + email + vendor + date  — row has both phone AND email
+// 8. name + phone + vendor + date          — row has phone but NO email
+// 9. name + email + vendor + date          — row has email but NO phone
 //
-// Conditions 7-8 are a fallback for rows with no vehicle identifier at all.
+// Conditions 7-9 are a fallback for rows with no vehicle identifier at all,
+// and only ever apply once (never both 8 and 9 for the same row): when a row
+// has both phone and email, BOTH must match to call it a duplicate — a
+// second submission with the same name/phone but a different (e.g. mistyped)
+// email is a distinct lead, not a duplicate. Only when one of phone/email is
+// missing do we fall back to matching on whichever single field is present.
+//
 // A lead with the same name/phone/email but a DIFFERENT VIN or stock# is a
 // separate inquiry (same person asking about a different vehicle), not a
-// duplicate — so 7-8 must not fire once either VIN or stock# is present.
+// duplicate — so 7-9 must not fire once either VIN or stock# is present.
 //
 // A row is a duplicate if ANY fingerprint matches an existing lead in the DB
 // or another row already processed in the same file.
@@ -124,12 +131,17 @@ function buildLeadFingerprints(opts: {
     if (email) keys.push(`stock+vendor+date+email|${stock}|${vendor}|${date}|${email}`);
   }
 
-  // Person-based (conditions 7-8) — fallback only: a row with a VIN or stock#
+  // Person-based (conditions 7-9) — fallback only: a row with a VIN or stock#
   // is a specific vehicle inquiry, so name/phone/email alone must not match
   // it against a different vehicle inquiry from the same person.
   if (!vin && !stock) {
-    if (name && phone) keys.push(`name+phone+vendor+date|${name}|${phone}|${vendor}|${date}`);
-    if (name && email) keys.push(`name+email+vendor+date|${name}|${email}|${vendor}|${date}`);
+    if (name && phone && email) {
+      keys.push(`name+phone+email+vendor+date|${name}|${phone}|${email}|${vendor}|${date}`);
+    } else if (name && phone) {
+      keys.push(`name+phone+vendor+date|${name}|${phone}|${vendor}|${date}`);
+    } else if (name && email) {
+      keys.push(`name+email+vendor+date|${name}|${email}|${vendor}|${date}`);
+    }
   }
 
   return keys;
@@ -142,6 +154,7 @@ function labelFingerprint(key: string): string {
   if (key.startsWith('stock+vendor+date+name|'))  return 'Stock# + Vendor + Date + Name';
   if (key.startsWith('stock+vendor+date+phone|')) return 'Stock# + Vendor + Date + Phone';
   if (key.startsWith('stock+vendor+date+email|')) return 'Stock# + Vendor + Date + Email';
+  if (key.startsWith('name+phone+email+vendor+date|')) return 'Name + Phone + Email + Vendor + Date';
   if (key.startsWith('name+phone+vendor+date|'))  return 'Name + Phone + Vendor + Date';
   if (key.startsWith('name+email+vendor+date|'))  return 'Name + Email + Vendor + Date';
   return key;
@@ -348,7 +361,7 @@ export default function UploadPage() {
         dol: toInt(get(row, 'dol')), last_price: toNum(get(row, 'last_price')),
         lotlinx_vdp: toInt(get(row, 'lotlinx_vdp')), total_vdp: toInt(get(row, 'total_vdp')),
         net_new_shoppers: toInt(get(row, 'net_new_shoppers')), pct_sales_opps_since_campaign: toNum(get(row, 'pct_sales_opps')),
-        lead_date: parseLeadDate(get(row, 'lead_date')) ?? '(today — no value found)',
+        lead_date: parseLeadDate(get(row, 'lead_date')),
         source_label: get(row, 'source') || null, type_of_vehicle: get(row, 'type_of_vehicle') || null,
         type_of_leads: get(row, 'type_of_leads') || null, stock_number: get(row, 'stock_number') || null,
         notes: get(row, 'notes') || null, lead_status: 'new',
@@ -371,6 +384,24 @@ export default function UploadPage() {
     }
     return out;
   }, [effectiveRows, mapping]);
+
+  const leadDateMapped = !!mapping['lead_date'] && mapping['lead_date'] !== NONE;
+
+  // Rows that will import with no lead_date because the mapped column is
+  // blank or unparseable for that row. Non-blocking — just makes sure the
+  // admin knows before importing (these rows previously got silently
+  // stamped with the upload time instead, which corrupted "when did this
+  // lead come in" reporting).
+  const missingLeadDateCount = useMemo(() => {
+    if (effectiveRows.length === 0 || !leadDateMapped) return 0;
+    const col = mapping['lead_date'];
+    let missing = 0;
+    for (const row of effectiveRows) {
+      const raw = (row[col] ?? '').toString().trim();
+      if (!raw || !parseLeadDate(raw)) missing++;
+    }
+    return missing;
+  }, [effectiveRows, mapping, leadDateMapped]);
 
   // ---------------------------------------------------------------------------
   // Step 1: Parse, normalize, dedup check, open review modal
@@ -419,7 +450,7 @@ export default function UploadPage() {
         const normNameStr = normalizeName(fullName);
         const nVin        = normVin(vin) ?? '';
         const nStock      = normStock(stockRaw) ?? '';
-        const leadDateIso = parseLeadDate(leadDateRaw) ?? new Date().toISOString();
+        const leadDateIso = parseLeadDate(leadDateRaw);
         const leadDateStr = normDate(leadDateIso);
 
         const fingerprints = buildLeadFingerprints({ email: normEmail, phone: normPhone, vin: nVin, stock: nStock, name: normNameStr, leadDate: leadDateStr, vendor: vendorId === NONE ? 'unassigned' : vendorId });
@@ -823,6 +854,29 @@ export default function UploadPage() {
             </Alert>
           )}
 
+          {!leadDateMapped && effectiveRows.length > 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>No lead date column mapped</AlertTitle>
+              <AlertDescription>
+                Map a "Lead date" column above before importing. Without it, leads can't be tied to
+                when they actually came in — reporting would otherwise use the upload time instead.
+              </AlertDescription>
+            </Alert>
+          )}
+
+          {leadDateMapped && missingLeadDateCount > 0 && (
+            <Alert variant="destructive">
+              <AlertTriangle className="h-4 w-4" />
+              <AlertTitle>Some rows are missing a lead date</AlertTitle>
+              <AlertDescription>
+                {missingLeadDateCount} of {effectiveRows.length} row(s) have a blank or unparseable value in the
+                mapped lead date column. Those leads will import with no lead date (shown as "—" in
+                reports) rather than being stamped with today's date.
+              </AlertDescription>
+            </Alert>
+          )}
+
           {/* Import button */}
           <div className="flex items-center justify-between gap-3">
             {result && (
@@ -836,12 +890,12 @@ export default function UploadPage() {
             )}
             <Button
               onClick={prepareImport}
-              disabled={busy || nameWarnings.length > 0 || vendorId === NONE || (hasJsonColumn && jsonColumnName === NONE)}
+              disabled={busy || nameWarnings.length > 0 || vendorId === NONE || !leadDateMapped || (hasJsonColumn && jsonColumnName === NONE)}
               className="ml-auto"
-              title={vendorId === NONE ? 'Select a vendor before importing' : hasJsonColumn && jsonColumnName === NONE ? 'Select which column contains the JSON' : nameWarnings.length > 0 ? 'Fix name column mapping above to enable import' : undefined}
+              title={vendorId === NONE ? 'Select a vendor before importing' : hasJsonColumn && jsonColumnName === NONE ? 'Select which column contains the JSON' : !leadDateMapped ? 'Map a Lead date column above to enable import' : nameWarnings.length > 0 ? 'Fix name column mapping above to enable import' : undefined}
             >
               <UploadIcon className="mr-1 h-4 w-4" />
-              {busy ? 'Checking...' : vendorId === NONE ? 'Select a vendor to import' : hasJsonColumn && jsonColumnName === NONE ? 'Select JSON column to import' : nameWarnings.length > 0 ? 'Fix mapping to import' : `Import ${effectiveRows.length} rows`}
+              {busy ? 'Checking...' : vendorId === NONE ? 'Select a vendor to import' : hasJsonColumn && jsonColumnName === NONE ? 'Select JSON column to import' : !leadDateMapped ? 'Map a lead date column to import' : nameWarnings.length > 0 ? 'Fix mapping to import' : `Import ${effectiveRows.length} rows`}
             </Button>
           </div>
         </>
