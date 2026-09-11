@@ -73,10 +73,11 @@ SECURITY DEFINER
 SET search_path = public
 AS $$
 BEGIN
-  -- Same permission shape as attribute_sales_for_org: callable by an admin
-  -- for any org, by a client for their own org, or (auth.uid() IS NULL)
-  -- from the Supabase SQL editor / service-role context.
-  IF NOT (auth.uid() IS NULL OR has_role(auth.uid(), 'admin') OR get_user_org(auth.uid()) = _org_id) THEN
+  -- Membership-aware: admin, service role, or a member of this org via
+  -- user_organizations. Deliberately NOT "get_user_org(auth.uid()) = _org_id"
+  -- -- that resolves to a single org from profiles and locks a client out of
+  -- every dealership but their first. See 20260911000003.
+  IF NOT public.user_can_access_org(_org_id) THEN
     RAISE EXCEPTION 'Not authorized for organization %', _org_id;
   END IF;
 
