@@ -96,6 +96,24 @@ export function AttributionOverrideDialog({
         })
         .eq('id', sale.id);
       if (error) throw error;
+
+      // Mirror the pin into sale_attributions as matched_on = 'manual'.
+      // WHY: the automatic matcher skips manual_override sales entirely, so
+      // without this a hand-pinned sale would carry no credit row at all and
+      // show blank in the Credited Vendors column. Clearing the vendor
+      // removes the manual row rather than writing an empty one.
+      if (vendorId === NONE) {
+        const { error: clearErr } = await supabase.rpc('clear_manual_sale_attribution', { _sale_id: sale.id });
+        if (clearErr) throw clearErr;
+      } else {
+        const { error: creditErr } = await supabase.rpc('set_manual_sale_attribution', {
+          _sale_id: sale.id,
+          _vendor_id: vendorId,
+          _lead_id: leadId === NONE ? null : leadId,
+        });
+        if (creditErr) throw creditErr;
+      }
+
       toast.success('Attribution updated');
       onSaved();
       onOpenChange(false);
@@ -119,6 +137,13 @@ export function AttributionOverrideDialog({
         })
         .eq('id', sale.id);
       if (error) throw error;
+
+      // Drop the manual credit too, so the sale goes back to being described
+      // purely by whatever the automatic matcher finds. Scoped to manual rows
+      // only — any automatic credits this sale already earned are untouched.
+      const { error: clearErr } = await supabase.rpc('clear_manual_sale_attribution', { _sale_id: sale.id });
+      if (clearErr) throw clearErr;
+
       toast.success('Override cleared — will re-match on next attribution run');
       onSaved();
       onOpenChange(false);

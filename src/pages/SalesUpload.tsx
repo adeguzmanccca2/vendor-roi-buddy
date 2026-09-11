@@ -343,8 +343,35 @@ export default function SalesUploadPage() {
       );
       if (updateErr) console.warn('[SalesUpload] upload summary update failed:', updateErr);
 
+      // ── Step 5: Attribute the new sales to vendors ────────────────────────
+      // This upload path previously did no attribution at all -- sales landed
+      // unattributed until someone remembered to run the matcher by hand.
+      // Runs the same multi-vendor matcher the webhook and email imports use.
+      // Idempotent (inserts only credits that don't already exist), and it
+      // rescans every sale, so leads imported since the last run retroactively
+      // credit older sales too.
+      let credited = 0;
+      if (inserted > 0) {
+        setImportStatus('Matching sales to vendors...');
+        const { data: creditCount, error: attrErr } = await withTimeout(
+          supabase.rpc('attribute_sale_credits_for_org', { _org_id: activeOrgId }),
+          'Attributing sales to vendors',
+        );
+        // Non-fatal: the sales are already safely imported. Surface it, but
+        // don't fail the upload -- attribution can be re-run any time.
+        if (attrErr) {
+          console.warn('[SalesUpload] attribution failed:', attrErr);
+          toast.warning('Sales imported, but vendor matching failed — re-run it from Attribution → Dry run.');
+        } else {
+          credited = Number(creditCount ?? 0);
+        }
+      }
+
       setResult({ inserted, duplicates: totalDupes, skippedRows: dupesDetail, uploadId: upload.id });
-      toast.success(`Imported ${inserted} sales · ${totalDupes} duplicates skipped`);
+      toast.success(
+        `Imported ${inserted} sales · ${totalDupes} duplicates skipped` +
+        (credited > 0 ? ` · ${credited} vendor credit(s) matched` : ''),
+      );
 
     } catch (e: any) {
       const msg = e?.message ?? 'Import failed';

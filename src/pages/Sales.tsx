@@ -24,7 +24,6 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Pencil, Trash2, Download, Search, X, ArrowUp, ArrowDown, ArrowUpDown, Upload, CalendarX } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { downloadCsv } from '@/lib/exportCsv';
-import { normalizePhone, normalizeEmail } from '@/lib/normalize';
 import { toast } from 'sonner';
 
 interface Sale {
@@ -79,33 +78,6 @@ const emptyForm = {
   notes: '',
 };
 
-// ---------------------------------------------------------------------------
-// WHY: Name matching helpers
-//
-// extractLastName: takes the last word of a name string as a normalized last
-// name token. We use last name only (not full name) because:
-//   • Sales records often have "JOHN SMITH" while leads have "John Smith"
-//   • First names vary most (Bob/Robert, Bill/William, Liz/Elizabeth)
-//   • Last name alone is a strong enough secondary check alongside phone/email
-// We lowercase and strip non-alpha so punctuation/spacing never blocks a match.
-//
-// namesMatch: returns true if either name's last name token appears inside the
-// other string. Contains-check (not equality) handles suffixes like
-// "Smith Jr" vs "Smith". Minimum 2 chars avoids single-letter false positives.
-// ---------------------------------------------------------------------------
-function extractLastName(fullName: string | null): string {
-  if (!fullName) return '';
-  const parts = fullName.trim().toLowerCase().replace(/[^a-z\s]/g, '').trim().split(/\s+/);
-  return parts[parts.length - 1] ?? '';
-}
-
-function namesMatch(nameA: string | null, nameB: string | null): boolean {
-  const a = extractLastName(nameA);
-  const b = extractLastName(nameB);
-  if (a.length < 2 || b.length < 2) return false;
-  return a.includes(b) || b.includes(a);
-}
-
 function SortHeader({
   label, k, sortKey, sortDir, onClick, align = 'left',
 }: {
@@ -141,8 +113,6 @@ export default function SalesPage() {
   const [confirmDelete, setConfirmDelete] = useState<{ ids: string[]; label: string } | null>(null);
   const [sortKey, setSortKey] = useState<keyof Sale>('sale_date');
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('desc');
-  interface MatchResult { customerName: string; matchMethod: string; vendorName: string | null }
-  const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult>>(new Map());
   const [matching, setMatching] = useState(false);
 
   // Multi-vendor credits from the new sale_attributions model. Kept entirely
@@ -164,26 +134,6 @@ export default function SalesPage() {
     vendorList.forEach(v => m.set(v.id, v.name));
     return m;
   }, [vendorList]);
-
-  // WHY: On load, read match_method from DB so the badge shows "via Phone+Name"
-  // etc. immediately — no need to re-run Match Leads. Older records without
-  // match_method fall back gracefully to displaying 'Auto'.
-  useEffect(() => {
-    if (sales.length === 0) return;
-    const result = new Map<string, MatchResult>();
-    for (const sale of sales) {
-      if (sale.vendor_id && (sale.attribution_status === 'auto' || sale.attribution_status === 'manual')) {
-        result.set(sale.id, {
-          customerName: sale.customer_full_name ?? 'Unknown',
-          matchMethod: sale.attribution_status === 'manual'
-            ? 'Manual'
-            : (sale.match_method ?? 'Auto'),
-          vendorName: vendorMap.get(sale.vendor_id) ?? null,
-        });
-      }
-    }
-    setLeadMatches(result);
-  }, [sales, vendorMap]);
 
   const toggleSort = (key: keyof Sale) => {
     if (sortKey === key) setSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
@@ -414,245 +364,38 @@ export default function SalesPage() {
   };
 
   // ---------------------------------------------------------------------------
-  // matchLeads — confidence waterfall (highest → lowest):
+  // runAttribution — hands off to the multi-vendor matcher in SQL
+  // (attribute_sale_credits_for_org), which is the same function the sales
+  // upload, the receive-sales webhook and the inbound-email import all call.
   //
-  //  1. VIN          100%  unique vehicle ID, most reliable
-  //  2. Stock#        95%  dealership stock number, very reliable
-  //  3. Phone+Name    90%  phone + last-name match eliminates shared-phone risk
-  //  4. Email+Name    90%  email + last-name match, same logic
-  //  5. Email+Phone   88%  two independent contact fields agree (no name needed)
-  //  6. Phone alone   75%  single-field fallback, only when exactly 1 lead matches
-  //  7. Email alone   75%  single-field fallback, only when exactly 1 lead matches
+  // This replaces a ~200 line client-side waterfall that implemented its own
+  // rules (VIN -> Stock# -> Phone+Name -> Email+Name -> Email+Phone -> Phone
+  // -> Email) and wrote the legacy single-winner columns. Those rules now
+  // live in one place, in SQL, so the button and the automated import paths
+  // can no longer disagree about what a match is.
   //
-  // WHY Phone/Email maps hold arrays: unlike VIN/Stock# (unique per vehicle),
-  // a phone or email can appear on multiple leads. Arrays let combo checks
-  // scan all candidates for name or second-field agreement.
-  //
-  // WHY "exactly 1" guard on solo Phone/Email fallback: if multiple leads share
-  // the same phone or email we cannot confidently pick one, so we skip rather
-  // than risk a wrong attribution.
-  //
-  // WHY vehicle-conflict filtering on tiers 3-7: a repeat/fleet buyer (same
-  // phone or email) can submit one lead and then buy many unrelated vehicles.
-  // If the sale has its own VIN/Stock# and it doesn't match a candidate
-  // lead's VIN/Stock#, that candidate is provably the wrong vehicle — drop it
-  // before doing name/uniqueness checks, even though tiers 3-7 don't require
-  // VIN/Stock# to match, they must not contradict.
-  //
-  // WHY one-sale cap on vehicle-less leads (tiers 3-7 only, when the matched
-  // lead has no VIN and no Stock# at all): with zero vehicle evidence, phone/
-  // email is the ONLY signal, and a repeat/fleet account can generate many
-  // unrelated sales on the same phone/email over months. Letting one generic
-  // lead claim every one of those sales is exactly as wrong as a VIN
-  // conflict, just without a VIN to prove it. So such a lead is only allowed
-  // to claim the single closest-dated sale (by |sale_date - lead_date|); the
-  // rest are left unmatched for manual review.
+  // Idempotent: it only inserts credits that don't already exist, and it
+  // rescans every sale, so leads that arrived since the last run
+  // retroactively credit older sales.
   // ---------------------------------------------------------------------------
-  const matchLeads = async () => {
+  const runAttribution = async () => {
     if (!activeOrgId) return;
     setMatching(true);
-
-    const { data: leadsData } = await supabase
-      .from('leads')
-      .select('id, customer_full_name, customer_email, customer_phone, normalized_phone, normalized_email, vendor_id, vin, stock_number, lead_date')
-      .eq('organization_id', activeOrgId);
-
-    type LeadEntry = {
-      leadId: string; name: string; vendorId: string | null;
-      normPhone: string; normEmail: string;
-      vin: string; stock: string;
-      leadDateMs: number | null;
-    };
-
-    const vinMap   = new Map<string, LeadEntry>();
-    const stockMap = new Map<string, LeadEntry>();
-    const phoneMap = new Map<string, LeadEntry[]>();
-    const emailMap = new Map<string, LeadEntry[]>();
-
-    for (const lead of leadsData ?? []) {
-      const normPhone = lead.normalized_phone || normalizePhone(lead.customer_phone);
-      const normEmail = lead.normalized_email || normalizeEmail(lead.customer_email);
-      const entry: LeadEntry = {
-        leadId: lead.id,
-        name: lead.customer_full_name ?? '',
-        vendorId: lead.vendor_id ?? null,
-        normPhone,
-        normEmail,
-        vin: (lead.vin ?? '').trim().toUpperCase(),
-        stock: (lead.stock_number ?? '').trim().toUpperCase(),
-        leadDateMs: lead.lead_date ? new Date(lead.lead_date).getTime() : null,
-      };
-      if (lead.vin) {
-        const key = lead.vin.trim().toUpperCase();
-        if (key && !vinMap.has(key)) vinMap.set(key, entry);
-      }
-      if (lead.stock_number) {
-        const key = lead.stock_number.trim().toUpperCase();
-        if (key && !stockMap.has(key)) stockMap.set(key, entry);
-      }
-      if (normPhone) {
-        if (!phoneMap.has(normPhone)) phoneMap.set(normPhone, []);
-        phoneMap.get(normPhone)!.push(entry);
-      }
-      if (normEmail) {
-        if (!emailMap.has(normEmail)) emailMap.set(normEmail, []);
-        emailMap.get(normEmail)!.push(entry);
-      }
-    }
-
-    // Find first candidate whose last name matches the sale's customer name
-    const findByName = (candidates: LeadEntry[], saleName: string | null): LeadEntry | null =>
-      candidates.find(c => namesMatch(c.name, saleName)) ?? null;
-
-    // Drop candidates whose VIN/Stock# actively contradicts the sale's own
-    // VIN/Stock# — a repeat buyer's phone/email can match many leads, but a
-    // mismatched vehicle identifier proves it's the wrong one.
-    const dropVehicleConflicts = (candidates: LeadEntry[], saleVin: string, saleStock: string): LeadEntry[] =>
-      candidates.filter(c =>
-        !(saleVin && c.vin && c.vin !== saleVin) &&
-        !(saleStock && c.stock && c.stock !== saleStock),
+    try {
+      const { data, error } = await supabase.rpc('attribute_sale_credits_for_org', { _org_id: activeOrgId });
+      if (error) throw error;
+      const added = Number(data ?? 0);
+      await loadCredits();
+      toast.success(
+        added > 0
+          ? `Matched ${added} new vendor credit(s)`
+          : 'No new matches — every sale is already credited',
       );
-
-    const result = new Map<string, MatchResult>();
-    type SaleUpdate = {
-      id: string; vendor_id: string | null; lead_id: string;
-      confidence: number; assignVendor: boolean; method: string;
-    };
-    const updates: SaleUpdate[] = [];
-
-    const finalize = (sale: Sale, matched: LeadEntry, method: string, confidence: number) => {
-      result.set(sale.id, {
-        customerName: matched.name || (sale.customer_full_name ?? 'Unknown'),
-        matchMethod: method,
-        vendorName: matched.vendorId ? vendorMap.get(matched.vendorId) ?? null : null,
-      });
-      updates.push({
-        id: sale.id,
-        lead_id: matched.leadId,
-        vendor_id: matched.vendorId && !sale.vendor_id ? matched.vendorId : (sale.vendor_id ?? null),
-        confidence,
-        assignVendor: !!(matched.vendorId && !sale.vendor_id),
-        method,
-      });
-    };
-
-    // Vehicle-less matches (tiers 3-7, lead has no VIN/Stock#) are held back
-    // per lead until every sale has been scanned, so we can pick only the
-    // closest-dated one per lead instead of claiming all of them.
-    type PendingVehicleLess = { sale: Sale; matched: LeadEntry; method: string; confidence: number; diffMs: number };
-    const vehicleLessByLead = new Map<string, PendingVehicleLess[]>();
-
-    for (const sale of sales) {
-      if (sale.attribution_status === 'manual') continue;
-
-      let matched: LeadEntry | null = null;
-      let method = '';
-      let confidence = 0;
-
-      const saleVin   = sale.vin?.trim().toUpperCase() ?? '';
-      const saleStock = sale.stock_number?.trim().toUpperCase() ?? '';
-      const salePhone = normalizePhone(sale.customer_phone);
-      const saleEmail = normalizeEmail(sale.customer_email);
-
-      // 1. VIN
-      if (saleVin) {
-        const hit = vinMap.get(saleVin);
-        if (hit) { matched = hit; method = 'VIN'; confidence = 100; }
-      }
-
-      // 2. Stock#
-      if (!matched && saleStock) {
-        const hit = stockMap.get(saleStock);
-        if (hit) { matched = hit; method = 'Stock#'; confidence = 95; }
-      }
-
-      // 3. Phone + Name
-      if (!matched && salePhone) {
-        const candidates = dropVehicleConflicts(phoneMap.get(salePhone) ?? [], saleVin, saleStock);
-        const hit = findByName(candidates, sale.customer_full_name);
-        if (hit) { matched = hit; method = 'Phone+Name'; confidence = 90; }
-      }
-
-      // 4. Email + Name
-      if (!matched && saleEmail) {
-        const candidates = dropVehicleConflicts(emailMap.get(saleEmail) ?? [], saleVin, saleStock);
-        const hit = findByName(candidates, sale.customer_full_name);
-        if (hit) { matched = hit; method = 'Email+Name'; confidence = 90; }
-      }
-
-      // 5. Email + Phone (same lead has both, no name needed)
-      if (!matched && salePhone && saleEmail) {
-        const candidates = dropVehicleConflicts(phoneMap.get(salePhone) ?? [], saleVin, saleStock);
-        const hit = candidates.find(c => c.normEmail === saleEmail) ?? null;
-        if (hit) { matched = hit; method = 'Email+Phone'; confidence = 88; }
-      }
-
-      // 6. Phone alone — only if exactly 1 non-conflicting lead has this phone
-      if (!matched && salePhone) {
-        const candidates = dropVehicleConflicts(phoneMap.get(salePhone) ?? [], saleVin, saleStock);
-        if (candidates.length === 1) {
-          matched = candidates[0]; method = 'Phone'; confidence = 75;
-        }
-      }
-
-      // 7. Email alone — only if exactly 1 non-conflicting lead has this email
-      if (!matched && saleEmail) {
-        const candidates = dropVehicleConflicts(emailMap.get(saleEmail) ?? [], saleVin, saleStock);
-        if (candidates.length === 1) {
-          matched = candidates[0]; method = 'Email'; confidence = 75;
-        }
-      }
-
-      if (matched) {
-        const isVehicleLess = (method === 'Phone+Name' || method === 'Email+Name' || method === 'Email+Phone' || method === 'Phone' || method === 'Email')
-          && !matched.vin && !matched.stock;
-
-        if (isVehicleLess) {
-          const saleMs = sale.sale_date ? new Date(sale.sale_date).getTime() : null;
-          const diffMs = (saleMs !== null && matched.leadDateMs !== null)
-            ? Math.abs(saleMs - matched.leadDateMs)
-            : Number.POSITIVE_INFINITY;
-          const arr = vehicleLessByLead.get(matched.leadId) ?? [];
-          arr.push({ sale, matched, method, confidence, diffMs });
-          vehicleLessByLead.set(matched.leadId, arr);
-        } else {
-          finalize(sale, matched, method, confidence);
-        }
-      }
+    } catch (e: any) {
+      toast.error('Matching failed: ' + (e.message ?? 'Unknown error'));
+    } finally {
+      setMatching(false);
     }
-
-    // Resolve each vehicle-less lead's candidate sales down to a single
-    // closest-dated winner; the rest stay unmatched.
-    for (const candidates of vehicleLessByLead.values()) {
-      const winner = candidates.reduce((best, c) => (c.diffMs < best.diffMs ? c : best));
-      finalize(winner.sale, winner.matched, winner.method, winner.confidence);
-    }
-
-    setLeadMatches(result);
-
-    if (updates.length > 0) {
-      await Promise.all(
-        updates.map(u => {
-          const payload: any = {
-            lead_id: u.lead_id,
-            attribution_status: 'auto',
-            attribution_confidence: u.confidence,
-            match_method: u.method,
-          };
-          if (u.assignVendor) payload.vendor_id = u.vendor_id;
-          return supabase.from('sales').update(payload).eq('id', u.id);
-        }),
-      );
-      void load();
-    }
-
-    setMatching(false);
-    const matchCount = result.size;
-    toast.success(
-      updates.length > 0
-        ? `Matched ${matchCount} of ${sales.length} sales · vendor assigned to ${updates.length}`
-        : `Matched ${matchCount} of ${sales.length} sales to leads`
-    );
   };
 
   const exportCsv = () => {
@@ -670,9 +413,13 @@ export default function SalesPage() {
       total_gross: s.total_gross ?? '',
       salesperson: s.salesperson ?? '',
       source_label: s.source_label ?? '',
-      vendor: s.vendor_id ? vendorMap.get(s.vendor_id) ?? '' : '',
-      attribution_status: s.attribution_status,
-      match_method: s.match_method ?? '',
+      // Multi-vendor credits, mirroring the on-screen column. Semicolon
+      // separated because a sale can legitimately be credited to several
+      // vendors, which the old single `vendor` column could not express.
+      credited_vendors: (credits.get(s.id) ?? [])
+        .map(c => vendorMap.get(c.vendorId) ?? 'unknown')
+        .join('; '),
+      matched_on: (credits.get(s.id) ?? []).map(c => c.matchedOn).join('; '),
     }));
     downloadCsv(`sales-${activeOrg?.name ?? 'export'}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
   };
@@ -688,7 +435,10 @@ export default function SalesPage() {
   }
 
   const filtersActive = !!(search || vinFilter || nameFilter || dateFrom || dateTo) || vendorFilter !== '__all__';
-  const matchRate = sales.length > 0 ? Math.round(leadMatches.size / sales.length * 100) : 0;
+  // Match rate now counts sales with at least one credit in sale_attributions,
+  // not the old single-winner vendor_id column.
+  const creditedSales = sales.reduce((n, s) => n + (credits.has(s.id) ? 1 : 0), 0);
+  const matchRate = sales.length > 0 ? Math.round((creditedSales / sales.length) * 100) : 0;
 
   return (
     <div className="space-y-6">
@@ -700,7 +450,7 @@ export default function SalesPage() {
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <Button variant="outline" size="sm" onClick={matchLeads} disabled={matching || sales.length === 0}>
+          <Button variant="outline" size="sm" onClick={runAttribution} disabled={matching || sales.length === 0}>
             {matching ? 'Matching…' : 'Match Leads'}
           </Button>
           <Button variant="outline" size="sm" asChild>
@@ -723,7 +473,7 @@ export default function SalesPage() {
       {sales.length > 0 && (
         <div className="flex items-center gap-3 text-sm">
           <span className="rounded-md border border-border bg-muted px-3 py-1.5 font-medium text-foreground">
-            {leadMatches.size.toLocaleString()} of {sales.length.toLocaleString()} matched
+            {creditedSales.toLocaleString()} of {sales.length.toLocaleString()} matched
           </span>
           <span className="text-muted-foreground">{matchRate}% match rate</span>
         </div>
@@ -818,20 +568,19 @@ export default function SalesPage() {
                   <SortHeader label="Price" k="sale_price" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Total gross" k="total_gross" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   {/* Not sortable: a sale can have several credits, so there is
-                      no single value on the Sale row to sort by. */}
+                      no single value on the Sale row to sort by. Replaces the
+                      old Vendor / Status / Lead Match trio, which described
+                      the retired single-winner model. */}
                   <TableHead>Credited Vendors</TableHead>
-                  <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
-                  <SortHeader label="Lead Match" k="lead_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <TableHead className="w-28 text-right">Actions</TableHead>
                 </TableRow>
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={14} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={11} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell></TableRow>
                 ) : sorted.length === 0 ? (
-                  <TableRow><TableCell colSpan={14} className="text-center text-sm text-muted-foreground">
+                  <TableRow><TableCell colSpan={11} className="text-center text-sm text-muted-foreground">
                     {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
                   </TableCell></TableRow>
                 ) : sorted.map(sale => (
@@ -850,41 +599,18 @@ export default function SalesPage() {
                     <TableCell className="text-right">{fmtCurrency(sale.sale_price)}</TableCell>
                     <TableCell className="text-right">{fmtCurrency(sale.total_gross ?? sale.gross_revenue)}</TableCell>
                     <TableCell>{sale.salesperson ?? '—'}</TableCell>
-                    <TableCell className="whitespace-nowrap text-sm">
-                      {sale.vendor_id
-                        ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
-                        : <span className="text-muted-foreground">—</span>}
-                    </TableCell>
                     <TableCell className="text-sm">
                       {(() => {
                         const list = credits.get(sale.id);
-                        if (!list || list.length === 0) return <span className="text-muted-foreground">—</span>;
+                        if (!list || list.length === 0) return <span className="text-muted-foreground">— No match</span>;
                         return (
                           <div className="space-y-0.5">
                             {list.map(c => (
                               <div key={c.vendorId} className="flex items-center gap-1 whitespace-nowrap">
-                                <span className="truncate max-w-[130px]">{vendorMap.get(c.vendorId) ?? 'unknown'}</span>
+                                <span className="truncate max-w-[150px] font-medium">{vendorMap.get(c.vendorId) ?? 'unknown'}</span>
                                 <Badge variant="outline" className="text-[10px] px-1 py-0">{c.matchedOn}</Badge>
                               </div>
                             ))}
-                          </div>
-                        );
-                      })()}
-                    </TableCell>
-                    <TableCell>
-                      <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
-                        {sale.attribution_status}
-                      </Badge>
-                    </TableCell>
-                    <TableCell className="text-sm">
-                      {(() => {
-                        const m = leadMatches.get(sale.id);
-                        if (!m) return <span className="text-muted-foreground">— No match</span>;
-                        return (
-                          <div className="space-y-0.5">
-                            <div className="font-medium text-green-600 truncate max-w-[140px]">{m.customerName}</div>
-                            <Badge variant="outline" className="text-[10px] px-1 py-0">via {m.matchMethod}</Badge>
-                            {m.vendorName && <div className="text-xs text-muted-foreground truncate max-w-[140px]">{m.vendorName}</div>}
                           </div>
                         );
                       })()}

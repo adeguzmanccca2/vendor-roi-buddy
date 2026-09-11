@@ -231,7 +231,12 @@ Deno.serve(async (req) => {
 
   const insertedCount = upserted?.length ?? 0;
 
-  await admin.rpc('attribute_sales_for_org', { _org_id: cred.organization_id });
+  // Multi-vendor matcher (VIN -> Stock# -> Email -> Phone), replacing the old
+  // attribute_sales_for_org, which used different rules (email/phone only)
+  // and wrote the legacy single-vendor columns. Idempotent, so running it on
+  // every push is safe -- it only inserts credits that don't already exist,
+  // and it also picks up older sales that newly-arrived leads now match.
+  await admin.rpc('attribute_sale_credits_for_org', { _org_id: cred.organization_id });
 
   await admin.from('api_credentials').update({
     last_used_at: new Date().toISOString(),

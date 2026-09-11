@@ -582,7 +582,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           .update({ last_used_at: new Date().toISOString(), lead_count: c.lead_count + result.rowsImported })
           .eq('id', c.id);
       } else {
-        await admin.rpc('attribute_sales_for_org', { _org_id: c.organization_id });
+        // Multi-vendor matcher (VIN -> Stock# -> Email -> Phone), replacing
+        // the old attribute_sales_for_org, which used different rules
+        // (email/phone only) and wrote the legacy single-vendor columns.
+        // Idempotent: inserts only credits that don't already exist, so
+        // firing it on every import is safe.
+        await admin.rpc('attribute_sale_credits_for_org', { _org_id: c.organization_id });
         await admin
           .from('api_credentials')
           .update({ last_used_at: new Date().toISOString(), sale_count: c.sale_count + result.rowsImported })
