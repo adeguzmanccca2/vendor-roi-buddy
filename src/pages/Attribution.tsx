@@ -21,6 +21,8 @@ import {
   ResponsiveContainer, BarChart, Bar, XAxis, YAxis, Tooltip, CartesianGrid,
   LineChart, Line, Cell, Legend,
 } from 'recharts';
+import { ExpandableChartCard } from '@/components/ExpandableChartCard';
+import { StatCard } from '@/components/StatCard';
 import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
@@ -185,6 +187,41 @@ function quarterOptions(count = 8): { value: `q:${string}`; label: string }[] {
     if (q === 0) { q = 4; y -= 1; }
   }
   return out;
+}
+
+// Y-axis for the ROI charts.
+//
+// WHY compute domain AND ticks by hand: passing only `domain` is not enough --
+// Recharts runs its own "nice tick" pass afterwards and widens the range back
+// out to make the intervals round (which is how a -100% floor became a -1500%
+// axis). Supplying explicit `ticks` leaves it nothing to recalculate.
+//
+// ROI is (revenue - cost) / cost and revenue is never negative, so -100% is
+// the mathematical floor. The axis therefore starts at 0 whenever nothing is
+// negative, and otherwise descends only as far as the data actually goes.
+function niceStep(v: number): number {
+  if (v <= 0) return 1;
+  const base = Math.pow(10, Math.floor(Math.log10(v)));
+  const frac = v / base;
+  const mult = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 5 ? 5 : 10;
+  return mult * base;
+}
+
+function buildRoiAxis(values: number[]): { domain: [number, number]; ticks: number[] } {
+  const finite = values.filter(v => Number.isFinite(v));
+  if (finite.length === 0) return { domain: [0, 100], ticks: [0, 50, 100] };
+
+  const rawMax = Math.max(0, ...finite);
+  const rawMin = Math.min(0, ...finite);
+
+  const step = niceStep(Math.max(rawMax, 1) / 5);
+  const max = Math.max(Math.ceil(rawMax / step) * step, step);
+  const min = rawMin >= 0 ? 0 : Math.max(-100, Math.floor(rawMin / 25) * 25);
+
+  const ticks: number[] = [];
+  if (min < 0) ticks.push(min);
+  for (let t = 0; t <= max + step / 2; t += step) ticks.push(Math.round(t));
+  return { domain: [min, max], ticks };
 }
 
 const CAT_COLOR: Record<VendorPerf['category'], string> = {
@@ -453,12 +490,27 @@ export default function AttributionPage() {
       category: p.category,
     })), [perf]);
 
+  const roiBarAxis = useMemo(() => buildRoiAxis(roiChart.map(d => d.roi)), [roiChart]);
+
   const roiTrend = useMemo(() => buildVendorRoiTrend({
     leads: trendLeads,
     sales: trendSalesFull,
     vendors,
     months: 12,
   }), [trendLeads, trendSalesFull, vendors]);
+
+  // Trend points are { month, 'vendor:<id>': number, ... } — pull every
+  // numeric series value out so the axis covers all vendor lines at once.
+  const roiTrendAxis = useMemo(() => {
+    const values: number[] = [];
+    for (const point of roiTrend.data) {
+      for (const series of roiTrend.series) {
+        const v = point[series.key];
+        if (typeof v === 'number') values.push(v);
+      }
+    }
+    return buildRoiAxis(values);
+  }, [roiTrend]);
 
   const exportVendorRoi = () => {
     const rows = perf.map(p => ({
@@ -568,79 +620,93 @@ export default function AttributionPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard icon={DollarSign} label="Revenue" value={fmtMoney(totals.revenue)} />
-        <StatCard icon={ShoppingCart} label="Sales" value={String(totals.sales)} sub={`${totals.leads} leads`} />
-        <StatCard icon={Target} label="Match rate" value={fmtPct(matchRate)} sub={`${matchedSales}/${sales.length} attributed`} />
+        <StatCard accent="amber" icon={DollarSign} label="Revenue" value={fmtMoney(totals.revenue)} />
         <StatCard
+          accent="orange"
+          icon={ShoppingCart}
+          label="Sales"
+          value={String(totals.sales)}
+          secondary={{ label: 'Leads', value: String(totals.leads) }}
+        />
+        <StatCard
+          accent="ember"
+          icon={Target}
+          label="Match rate"
+          value={fmtPct(matchRate)}
+          secondary={{ label: 'Attributed', value: `${matchedSales}/${sales.length}` }}
+        />
+        <StatCard
+          accent="rose"
           icon={totals.roi >= 0 ? TrendingUp : TrendingDown}
           label="Overall ROI"
           value={totals.cost > 0 ? `${(totals.roi * 100).toFixed(0)}%` : '—'}
-          sub={`Cost ${fmtMoney(totals.cost)}`}
+          secondary={{ label: 'Cost', value: fmtMoney(totals.cost) }}
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <Card>
-          <CardHeader><CardTitle className="text-base">Revenue — last 12 months</CardTitle></CardHeader>
-          <CardContent className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
-                <Tooltip
-                  formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
-                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-                />
-                <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
-              </LineChart>
-            </ResponsiveContainer>
-          </CardContent>
-        </Card>
+        <ExpandableChartCard title="Revenue — last 12 months">
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
+              <Tooltip
+                formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
+                contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+              />
+              <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
+            </LineChart>
+          </ResponsiveContainer>
+        </ExpandableChartCard>
 
-        <Card>
-          <CardHeader><CardTitle className="text-base">Vendor ROI (selected window)</CardTitle></CardHeader>
-          <CardContent className="h-64">
-            {roiChart.length === 0 ? (
-              <p className="text-sm text-muted-foreground">No vendors with cost data yet.</p>
-            ) : (
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={roiChart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="name" tick={{ fontSize: 11 }} />
-                  <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} />
-                  <Tooltip
-                    formatter={(v: any) => [`${v}%`, 'ROI']}
-                    contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-                  />
-                  <Bar dataKey="roi">
-                    {roiChart.map((entry, i) => (
-                      <Cell key={i} fill={CAT_COLOR[entry.category as VendorPerf['category']]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            )}
-          </CardContent>
-        </Card>
-      </div>
-
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">ROI trend by vendor — last 12 months</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Monthly ROI per vendor with cost data — shows whether a vendor is trending up or down, not just where it sits this period.
-          </p>
-        </CardHeader>
-        <CardContent className="h-80">
-          {roiTrend.series.length === 0 ? (
+        <ExpandableChartCard title="Vendor ROI (selected window)">
+          {roiChart.length === 0 ? (
             <p className="text-sm text-muted-foreground">No vendors with cost data yet.</p>
           ) : (
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart data={roiChart} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                <XAxis dataKey="name" tick={{ fontSize: 11 }} />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={v => `${v}%`}
+                  domain={roiBarAxis.domain}
+                  ticks={roiBarAxis.ticks}
+                />
+                <Tooltip
+                  formatter={(v: any) => [`${v}%`, 'ROI']}
+                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+                />
+                <Bar dataKey="roi">
+                  {roiChart.map((entry, i) => (
+                    <Cell key={i} fill={CAT_COLOR[entry.category as VendorPerf['category']]} />
+                  ))}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          )}
+        </ExpandableChartCard>
+      </div>
+
+      <ExpandableChartCard
+        title="ROI trend by vendor — last 12 months"
+        description="Monthly ROI per vendor with cost data — shows whether a vendor is trending up or down, not just where it sits this period."
+        compactClassName="h-56"
+      >
+        {roiTrend.series.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No vendors with cost data yet.</p>
+        ) : (
             <ResponsiveContainer width="100%" height="100%">
               <LineChart data={roiTrend.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
                 <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
                 <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} tickFormatter={v => `${v}%`} />
+                <YAxis
+                  tick={{ fontSize: 11 }}
+                  tickFormatter={v => `${v}%`}
+                  domain={roiTrendAxis.domain}
+                  ticks={roiTrendAxis.ticks}
+                />
                 <Tooltip
                   formatter={(value: number | string, name: string) => [`${value}%`, name]}
                   contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
@@ -660,9 +726,8 @@ export default function AttributionPage() {
                 ))}
               </LineChart>
             </ResponsiveContainer>
-          )}
-        </CardContent>
-      </Card>
+        )}
+      </ExpandableChartCard>
 
       <Card>
         <CardHeader><CardTitle className="text-base">Vendor performance</CardTitle></CardHeader>
@@ -917,21 +982,6 @@ export default function AttributionPage() {
         </DialogContent>
       </Dialog>
     </div>
-  );
-}
-
-function StatCard({ icon: Icon, label, value, sub }: { icon: any; label: string; value: string; sub?: string }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between">
-          <p className="text-xs uppercase text-muted-foreground">{label}</p>
-          <Icon className="h-4 w-4 text-muted-foreground" />
-        </div>
-        <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
-        {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
-      </CardContent>
-    </Card>
   );
 }
 

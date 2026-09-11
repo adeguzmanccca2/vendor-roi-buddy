@@ -4,6 +4,8 @@ import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { supabase } from '@/integrations/supabase/client';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { ExpandableChartCard } from '@/components/ExpandableChartCard';
+import { StatCard } from '@/components/StatCard';
 import { Button } from '@/components/ui/button';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Building2, Info, DollarSign, ShoppingCart, ListChecks, TrendingUp, Download } from 'lucide-react';
@@ -292,22 +294,22 @@ export default function ClientDashboard() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <Stat icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
-        <Stat icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
-        <Stat icon={DollarSign} label={`Revenue (YTD)`} value={fmtMoney(stats.revenue)} />
-        <Stat
+        <StatCard accent="amber" icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
+        <StatCard accent="orange" icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
+        <StatCard accent="ember" icon={DollarSign} label={`Revenue (YTD)`} value={fmtMoney(stats.revenue)} />
+        <StatCard
+          accent="rose"
           icon={TrendingUp}
           label={`ROI (YTD)`}
           value={ytdCost > 0 && stats.sales > 0 ? `${(roi * 100).toFixed(0)}%` : '—'}
-          sub={`Cost ${fmtMoney(ytdCost)}`}
+          secondary={{ label: 'Cost', value: fmtMoney(ytdCost) }}
         />
       </div>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Revenue trend — last 12 months</CardTitle>
-        </CardHeader>
-        <CardContent className="h-72">
+      {/* Two per row on wide screens, stacked on narrow. Adding another chart
+          is just another ExpandableChartCard in this grid — no layout change. */}
+      <div className="grid gap-4 lg:grid-cols-2">
+        <ExpandableChartCard title="Revenue trend — last 12 months">
           <ResponsiveContainer width="100%" height="100%">
             <LineChart data={trend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
@@ -320,45 +322,38 @@ export default function ClientDashboard() {
               <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
             </LineChart>
           </ResponsiveContainer>
-        </CardContent>
-      </Card>
+        </ExpandableChartCard>
 
-      <Card>
-        <CardHeader>
-          <CardTitle className="text-base">Vendor attribution — last 12 months</CardTitle>
-          <p className="text-xs text-muted-foreground">
-            Total attributed sales and total leads, plus a leads breakdown by vendor.
-          </p>
-        </CardHeader>
-        <CardContent>
-          <div className="h-80">
-            <ResponsiveContainer width="100%" height="100%">
-              <LineChart data={comparison.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip
-                  formatter={(value: any, name: any) => [value, name === 'attributedSales' ? 'Attributed sales' : name]}
-                  contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+        <ExpandableChartCard
+          title="Vendor attribution — last 12 months"
+          description="Total attributed sales and total leads, plus a leads breakdown by vendor."
+          footer={<VendorAttributionLegend series={comparison.series} />}
+        >
+          <ResponsiveContainer width="100%" height="100%">
+            <LineChart data={comparison.data} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
+              <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
+              <Tooltip
+                formatter={(value: any, name: any) => [value, name === 'attributedSales' ? 'Attributed sales' : name]}
+                contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
+              />
+              {comparison.series.map(series => (
+                <Line
+                  key={series.key}
+                  type="monotone"
+                  dataKey={series.key}
+                  name={series.label}
+                  stroke={series.color}
+                  strokeWidth={2}
+                  dot={{ r: 2 }}
+                  activeDot={{ r: 4 }}
                 />
-                {comparison.series.map(series => (
-                  <Line
-                    key={series.key}
-                    type="monotone"
-                    dataKey={series.key}
-                    name={series.label}
-                    stroke={series.color}
-                    strokeWidth={2}
-                    dot={{ r: 2 }}
-                    activeDot={{ r: 4 }}
-                  />
-                ))}
-              </LineChart>
-            </ResponsiveContainer>
-          </div>
-          <VendorAttributionLegend series={comparison.series} />
-        </CardContent>
-      </Card>
+              ))}
+            </LineChart>
+          </ResponsiveContainer>
+        </ExpandableChartCard>
+      </div>
 
       <Card>
         <CardHeader>
@@ -408,17 +403,3 @@ function VendorAttributionLegend({ series }: { series: VendorComparisonSeries[] 
   );
 }
 
-function Stat({ icon: Icon, label, value, sub }: { icon: any; label: string; value: string; sub?: string }) {
-  return (
-    <Card>
-      <CardContent className="pt-6">
-        <div className="flex items-center justify-between">
-          <p className="text-xs uppercase text-muted-foreground">{label}</p>
-          <Icon className="h-4 w-4 text-muted-foreground" />
-        </div>
-        <p className="mt-2 text-2xl font-bold text-foreground">{value}</p>
-        {sub && <p className="mt-1 text-xs text-muted-foreground">{sub}</p>}
-      </CardContent>
-    </Card>
-  );
-}
