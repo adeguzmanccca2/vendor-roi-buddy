@@ -14,9 +14,8 @@ import { getSupabaseErrorMessage } from '@/lib/supabaseError';
 const emailSchema = z.string().trim().email({ message: 'Invalid email' }).max(255);
 const passwordSchema = z.string().min(8, { message: 'Password must be at least 8 characters' }).max(72);
 const nameSchema = z.string().trim().min(1, { message: 'Name required' }).max(100);
-const otpSchema = z.string().trim().regex(/^\d{6}$/, { message: 'Enter the 6-digit code' });
 
-type LoginView = 'signin' | 'forgot' | 'otp';
+type LoginView = 'signin' | 'forgot';
 
 export default function AuthPage() {
   const navigate = useNavigate();
@@ -28,15 +27,6 @@ export default function AuthPage() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
-  // email verification code (required 2nd factor after password)
-  // WHY otpPending, set BEFORE the password check even starts: signInWithPassword
-  // briefly creates a real session the instant it succeeds, and the redirect effect
-  // below would otherwise fire on that session before we get a chance to sign it
-  // back out and demand the emailed code. Arming the guard first closes that window.
-  const [otpPending, setOtpPending] = useState(false);
-  const [otpEmail, setOtpEmail] = useState('');
-  const [otpCode, setOtpCode] = useState('');
-
   // forgot password
   const [forgotEmail, setForgotEmail] = useState('');
 
@@ -46,15 +36,8 @@ export default function AuthPage() {
   const [signupPassword, setSignupPassword] = useState('');
 
   useEffect(() => {
-    if (!loading && user && !otpPending) navigate('/', { replace: true });
-  }, [user, loading, navigate, otpPending]);
-
-  const resetToSignIn = () => {
-    setOtpPending(false);
-    setOtpCode('');
-    setLoginPassword('');
-    setLoginView('signin');
-  };
+    if (!loading && user) navigate('/', { replace: true });
+  }, [user, loading, navigate]);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -62,70 +45,17 @@ export default function AuthPage() {
     if (!emailRes.success) return toast.error(emailRes.error.errors[0].message);
     if (!loginPassword) return toast.error('Password required');
 
-    setOtpPending(true); // arm the redirect guard before any auth call runs
     setBusy(true);
     const { error } = await supabase.auth.signInWithPassword({
       email: emailRes.data,
       password: loginPassword,
     });
+    setBusy(false);
     if (error) {
-      setOtpPending(false);
-      setBusy(false);
       toast.error(error.message === 'Invalid login credentials' ? 'Invalid email or password' : getSupabaseErrorMessage(error));
       return;
     }
-
-    // Password is correct, but don't let the app treat this as a completed
-    // login yet — drop the session and require the emailed code first.
-    await supabase.auth.signOut();
-    const { error: otpErr } = await supabase.auth.signInWithOtp({
-      email: emailRes.data,
-      options: { shouldCreateUser: false },
-    });
-    setBusy(false);
-    if (otpErr) {
-      setOtpPending(false);
-      toast.error('Could not send verification code: ' + getSupabaseErrorMessage(otpErr));
-      return;
-    }
-    setOtpEmail(emailRes.data);
-    setLoginView('otp');
-    toast.success('Check your email for a 6-digit verification code');
-  };
-
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const codeRes = otpSchema.safeParse(otpCode);
-    if (!codeRes.success) return toast.error(codeRes.error.errors[0].message);
-
-    setBusy(true);
-    const { error } = await supabase.auth.verifyOtp({
-      email: otpEmail,
-      token: codeRes.data,
-      type: 'email',
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(getSupabaseErrorMessage(error) || 'Invalid or expired code');
-      return;
-    }
-    setOtpPending(false); // let the redirect effect take over now that it's verified
     toast.success('Signed in');
-  };
-
-  const handleResendOtp = async () => {
-    if (!otpEmail) return;
-    setBusy(true);
-    const { error } = await supabase.auth.signInWithOtp({
-      email: otpEmail,
-      options: { shouldCreateUser: false },
-    });
-    setBusy(false);
-    if (error) {
-      toast.error('Could not resend code: ' + getSupabaseErrorMessage(error));
-      return;
-    }
-    toast.success('New code sent');
   };
 
   const handleForgotPassword = async (e: React.FormEvent) => {
@@ -188,7 +118,7 @@ export default function AuthPage() {
             </TabsList>
 
             <TabsContent value="login">
-              {loginView === 'signin' && (
+              {loginView === 'signin' ? (
                 <form onSubmit={handleLogin} className="space-y-4 pt-4">
                   <div className="space-y-2">
                     <Label htmlFor="login-email">Email</Label>
@@ -211,9 +141,7 @@ export default function AuthPage() {
                     </button>
                   </div>
                 </form>
-              )}
-
-              {loginView === 'forgot' && (
+              ) : (
                 <form onSubmit={handleForgotPassword} className="space-y-4 pt-4">
                   <div className="space-y-1">
                     <h2 className="text-lg font-semibold">Reset your password</h2>
@@ -239,49 +167,6 @@ export default function AuthPage() {
                       type="button"
                       onClick={() => setLoginView('signin')}
                       className="text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                    >
-                      ← Back to sign in
-                    </button>
-                  </div>
-                </form>
-              )}
-
-              {loginView === 'otp' && (
-                <form onSubmit={handleVerifyOtp} className="space-y-4 pt-4">
-                  <div className="space-y-1">
-                    <h2 className="text-lg font-semibold">Enter verification code</h2>
-                    <p className="text-sm text-muted-foreground">
-                      We sent a 6-digit code to <span className="font-medium text-foreground">{otpEmail}</span>.
-                    </p>
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="otp-code">Verification code</Label>
-                    <Input
-                      id="otp-code"
-                      inputMode="numeric"
-                      autoComplete="one-time-code"
-                      maxLength={6}
-                      placeholder="123456"
-                      value={otpCode}
-                      onChange={e => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    />
-                  </div>
-                  <Button type="submit" className="w-full" disabled={busy}>
-                    {busy ? 'Verifying...' : 'Verify & Sign In'}
-                  </Button>
-                  <div className="flex items-center justify-between text-sm">
-                    <button
-                      type="button"
-                      onClick={handleResendOtp}
-                      disabled={busy}
-                      className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
-                    >
-                      Resend code
-                    </button>
-                    <button
-                      type="button"
-                      onClick={resetToSignIn}
-                      className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
                     >
                       ← Back to sign in
                     </button>
