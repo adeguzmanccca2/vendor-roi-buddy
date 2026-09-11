@@ -34,12 +34,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [loading, setLoading] = useState(true);
 
   const loadProfileAndRoles = async (uid: string) => {
-    const [{ data: prof }, { data: roleRows }] = await Promise.all([
-      supabase.from('profiles').select('*').eq('user_id', uid).maybeSingle(),
-      supabase.from('user_roles').select('role').eq('user_id', uid),
-    ]);
-    setProfile(prof ?? null);
-    setRoles(((roleRows ?? []) as { role: AppRole }[]).map(r => r.role));
+    try {
+      const [{ data: prof }, { data: roleRows }] = await Promise.all([
+        supabase.from('profiles').select('*').eq('user_id', uid).maybeSingle(),
+        supabase.from('user_roles').select('role').eq('user_id', uid),
+      ]);
+      setProfile(prof ?? null);
+      setRoles(((roleRows ?? []) as { role: AppRole }[]).map(r => r.role));
+    } catch (e) {
+      // Never leave this rejecting unhandled: the caller in the auth listener
+      // is fire-and-forget, so a throw here would surface as nothing at all.
+      console.error('Failed to load profile/roles', e);
+    }
   };
 
   useEffect(() => {
@@ -65,6 +71,14 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       } else {
         setLoading(false);
       }
+    }).catch((e) => {
+      // Without this, a rejected getSession() (Supabase unreachable, rate
+      // limited, corrupt stored session) leaves `loading` true forever and
+      // every ProtectedRoute sits on "Loading..." with nothing surfaced.
+      console.error('Auth session lookup failed', e);
+      setSession(null);
+      setUser(null);
+      setLoading(false);
     });
 
     return () => subscription.unsubscribe();
