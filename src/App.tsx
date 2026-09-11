@@ -17,6 +17,7 @@ import SalesUploadPage from '@/pages/SalesUpload';
 import SalesPage from '@/pages/Sales';
 import AttributionPage from '@/pages/Attribution';
 import FixAttributionPage from '@/pages/FixAttribution';
+import AttributionDryRunPage from '@/pages/AttributionDryRun';
 import SourceRulesPage from '@/pages/SourceRules';
 import InventoryPage from '@/pages/Inventory';
 import InventoryUploadPage from '@/pages/InventoryUpload';
@@ -110,6 +111,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><FixAttributionPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/attribution/dry-run"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><AttributionDryRunPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />

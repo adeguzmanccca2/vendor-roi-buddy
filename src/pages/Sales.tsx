@@ -145,6 +145,13 @@ export default function SalesPage() {
   const [leadMatches, setLeadMatches] = useState<Map<string, MatchResult>>(new Map());
   const [matching, setMatching] = useState(false);
 
+  // Multi-vendor credits from the new sale_attributions model. Kept entirely
+  // separate from sale.vendor_id (the legacy single-winner column, which the
+  // new matcher never writes) so the two can be compared side by side during
+  // rollout — one sale can appear here under several vendors.
+  interface SaleCredit { vendorId: string; matchedOn: string; confidence: number }
+  const [credits, setCredits] = useState<Map<string, SaleCredit[]>>(new Map());
+
   const [dateDeleteOpen, setDateDeleteOpen] = useState(false);
   const [deleteRangeFrom, setDeleteRangeFrom] = useState('');
   const [deleteRangeTo, setDeleteRangeTo] = useState('');
@@ -187,6 +194,7 @@ export default function SalesPage() {
     if (!activeOrgId) return;
     void load();
     void loadVendors();
+    void loadCredits();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeOrgId]);
 
@@ -195,6 +203,28 @@ export default function SalesPage() {
     const { data, error } = await supabase
       .from('vendors').select('id, name').eq('organization_id', activeOrgId).order('name');
     if (!error) setVendorList((data ?? []) as VendorOption[]);
+  }
+
+  async function loadCredits() {
+    if (!activeOrgId) return;
+    const { data, error } = await supabase
+      .from('sale_attributions')
+      .select('sale_id, vendor_id, matched_on, confidence')
+      .eq('organization_id', activeOrgId);
+    if (error) {
+      // Non-fatal: the rest of the page works fine without the new column.
+      console.error('Failed to load sale attributions', error);
+      return;
+    }
+    const m = new Map<string, SaleCredit[]>();
+    for (const r of (data ?? []) as { sale_id: string; vendor_id: string; matched_on: string; confidence: number }[]) {
+      const list = m.get(r.sale_id) ?? [];
+      list.push({ vendorId: r.vendor_id, matchedOn: r.matched_on, confidence: r.confidence });
+      m.set(r.sale_id, list);
+    }
+    // Strongest evidence first, so the highest-confidence credit reads first.
+    for (const list of m.values()) list.sort((a, b) => b.confidence - a.confidence);
+    setCredits(m);
   }
 
   async function load() {
@@ -789,6 +819,9 @@ export default function SalesPage() {
                   <SortHeader label="Total gross" k="total_gross" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} align="right" />
                   <SortHeader label="Salesperson" k="salesperson" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Vendor" k="vendor_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
+                  {/* Not sortable: a sale can have several credits, so there is
+                      no single value on the Sale row to sort by. */}
+                  <TableHead>Credited Vendors</TableHead>
                   <SortHeader label="Status" k="attribution_status" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <SortHeader label="Lead Match" k="lead_id" sortKey={sortKey} sortDir={sortDir} onClick={toggleSort} />
                   <TableHead className="w-28 text-right">Actions</TableHead>
@@ -796,9 +829,9 @@ export default function SalesPage() {
               </TableHeader>
               <TableBody>
                 {loading ? (
-                  <TableRow><TableCell colSpan={13} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell></TableRow>
+                  <TableRow><TableCell colSpan={14} className="text-center text-sm text-muted-foreground">Loading sales...</TableCell></TableRow>
                 ) : sorted.length === 0 ? (
-                  <TableRow><TableCell colSpan={13} className="text-center text-sm text-muted-foreground">
+                  <TableRow><TableCell colSpan={14} className="text-center text-sm text-muted-foreground">
                     {sales.length === 0 ? 'No sales yet. Upload a sales file to begin.' : 'No sales match your filters.'}
                   </TableCell></TableRow>
                 ) : sorted.map(sale => (
@@ -821,6 +854,22 @@ export default function SalesPage() {
                       {sale.vendor_id
                         ? vendorMap.get(sale.vendor_id) ?? <span className="text-muted-foreground italic">unknown</span>
                         : <span className="text-muted-foreground">—</span>}
+                    </TableCell>
+                    <TableCell className="text-sm">
+                      {(() => {
+                        const list = credits.get(sale.id);
+                        if (!list || list.length === 0) return <span className="text-muted-foreground">—</span>;
+                        return (
+                          <div className="space-y-0.5">
+                            {list.map(c => (
+                              <div key={c.vendorId} className="flex items-center gap-1 whitespace-nowrap">
+                                <span className="truncate max-w-[130px]">{vendorMap.get(c.vendorId) ?? 'unknown'}</span>
+                                <Badge variant="outline" className="text-[10px] px-1 py-0">{c.matchedOn}</Badge>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      })()}
                     </TableCell>
                     <TableCell>
                       <Badge variant={sale.attribution_status === 'auto' ? 'default' : sale.attribution_status === 'manual' ? 'secondary' : 'outline'}>
