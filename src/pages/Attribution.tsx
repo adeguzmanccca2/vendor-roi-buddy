@@ -299,22 +299,33 @@ export default function AttributionPage() {
   useEffect(() => { load(); /* eslint-disable-next-line */ }, [activeOrgId, period]);
 
   // Default the month picker to whichever month most recently had leads or
-  // sales LOADED (created_at, not lead_date/sale_date) — otherwise the page
-  // defaults to the current calendar month and looks empty until this
-  // month's data has actually been imported. Runs once per org; doesn't
-  // fight with the user manually changing the period afterward.
+  // sales data — otherwise the page defaults to the current calendar month
+  // and looks empty until this month's data has actually been imported.
+  // Matches on lead_date/sale_date (falling back to created_at only when
+  // those are null) since that's what the period filter below actually
+  // queries on — using created_at (upload time) here could pick a month
+  // that still renders empty if the imported rows carry an older date.
+  // Runs once per org; doesn't fight with the user manually changing the
+  // period afterward.
   const defaultPeriodOrgRef = useRef<string | null>(null);
   useEffect(() => {
     if (!activeOrgId || defaultPeriodOrgRef.current === activeOrgId) return;
     defaultPeriodOrgRef.current = activeOrgId;
     (async () => {
-      const [{ data: lastLead }, { data: lastSale }] = await Promise.all([
-        supabase.from('leads').select('created_at').eq('organization_id', activeOrgId)
-          .order('created_at', { ascending: false }).limit(1),
-        supabase.from('sales').select('created_at').eq('organization_id', activeOrgId)
-          .order('created_at', { ascending: false }).limit(1),
+      const [{ data: lastLead, error: leadErr }, { data: lastSale, error: saleErr }] = await Promise.all([
+        supabase.from('leads').select('lead_date, created_at').eq('organization_id', activeOrgId)
+          .order('lead_date', { ascending: false, nullsFirst: false }).limit(1),
+        supabase.from('sales').select('sale_date, created_at').eq('organization_id', activeOrgId)
+          .order('sale_date', { ascending: false, nullsFirst: false }).limit(1),
       ]);
-      const candidates = [lastLead?.[0]?.created_at, lastSale?.[0]?.created_at].filter(Boolean) as string[];
+      if (leadErr || saleErr) {
+        console.error('Failed to resolve default attribution period', leadErr ?? saleErr);
+        return;
+      }
+      const candidates = [
+        lastLead?.[0]?.lead_date ?? lastLead?.[0]?.created_at,
+        lastSale?.[0]?.sale_date ?? lastSale?.[0]?.created_at,
+      ].filter(Boolean) as string[];
       if (candidates.length === 0) return;
       const latest = new Date(candidates.reduce((a, b) => (a > b ? a : b)));
       setPeriod(`m:${latest.getFullYear()}-${String(latest.getMonth() + 1).padStart(2, '0')}`);
