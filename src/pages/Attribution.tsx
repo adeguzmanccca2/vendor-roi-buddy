@@ -25,7 +25,6 @@ import { ExpandableChartCard } from '@/components/ExpandableChartCard';
 import { StatCard } from '@/components/StatCard';
 import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
-import { buildVendorLookupMaps, getMatchingVendorIds } from '@/lib/attributionMatching';
 import { buildVendorRoiTrend } from '@/lib/dashboardCharts';
 import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 import { formatCompactMoney } from '@/lib/utils';
@@ -241,6 +240,10 @@ export default function AttributionPage() {
   const [trendSalesFull, setTrendSalesFull] = useState<SaleRow[]>([]);
   const [trendLeads, setTrendLeads] = useState<LeadRow[]>([]);
   const [leadDatesById, setLeadDatesById] = useState<Record<string, string>>({});
+  // sale_id -> vendor_ids credited, straight from sale_attributions. This page
+  // used to re-derive matches on every render with its own rules, which could
+  // disagree with what the matcher actually recorded; now it just reads them.
+  const [saleCredits, setSaleCredits] = useState<Map<string, string[]>>(new Map());
   const [loading, setLoading] = useState(true);
   const [period, setPeriod] = useState<Period>(currentMonthPeriod());
   const [customFrom, setCustomFrom] = useState('');
@@ -292,6 +295,13 @@ export default function AttributionPage() {
       const aldQ = supabase.from('leads').select('id, lead_date')
         .eq('organization_id', activeOrgId);
 
+      // Stored vendor credits. Fetched for the whole org rather than the
+      // selected period because the 12-month trend chart needs them too, and
+      // one row per (sale, vendor) is small enough that a single fetch beats
+      // two overlapping ones.
+      const caQ = supabase.from('sale_attributions').select('sale_id, vendor_id')
+        .eq('organization_id', activeOrgId);
+
       const [
         { data: vData, error: vErr },
         { data: lData, error: lErr },
@@ -300,11 +310,21 @@ export default function AttributionPage() {
         { data: tSData },
         { data: tLData },
         { data: aldData },
-      ] = await Promise.all([vQ, lQ, sQ, tQ, tSQ, tLQ, aldQ]);
+        { data: caData, error: caErr },
+      ] = await Promise.all([vQ, lQ, sQ, tQ, tSQ, tLQ, aldQ, caQ]);
 
       if (vErr) toast.error('Failed to load vendors: ' + vErr.message);
       if (lErr) toast.error('Failed to load leads: ' + lErr.message);
       if (sErr) toast.error('Failed to load sales: ' + sErr.message);
+      if (caErr) toast.error('Failed to load vendor credits: ' + caErr.message);
+
+      const creditMap = new Map<string, string[]>();
+      for (const r of (caData ?? []) as { sale_id: string; vendor_id: string }[]) {
+        const list = creditMap.get(r.sale_id) ?? [];
+        list.push(r.vendor_id);
+        creditMap.set(r.sale_id, list);
+      }
+      setSaleCredits(creditMap);
 
       setVendors((vData ?? []) as Vendor[]);
       const leadRows = (lData ?? []) as LeadRow[];
@@ -387,7 +407,6 @@ export default function AttributionPage() {
 
   const perf: VendorPerf[] = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
-    const { vinToVendors, stockToVendors, emailToVendors, phoneToVendors } = buildVendorLookupMaps(leads);
 
     const byVendor = new Map<string | null, { revenue: number; sales: number }>();
 
@@ -399,15 +418,12 @@ export default function AttributionPage() {
       byVendor.set(key, cur);
     };
 
+    // Credits come from sale_attributions, written by the one matcher that
+    // every import path shares. A sale credited to several vendors adds its
+    // full revenue to each -- intentional for vendor ROI auditing, and why
+    // the per-vendor revenue column can sum to more than total revenue.
     for (const s of sales) {
-      const matches = getMatchingVendorIds({
-        sale: s,
-        knownVendorIds,
-        vinToVendors,
-        stockToVendors,
-        emailToVendors,
-        phoneToVendors,
-      });
+      const matches = (saleCredits.get(s.id) ?? []).filter(id => knownVendorIds.has(id));
 
       if (matches.length > 0) {
         for (const vid of matches) credit(vid, s);
@@ -448,7 +464,7 @@ export default function AttributionPage() {
       });
     }
     return rows.sort((a, b) => b.revenue - a.revenue);
-  }, [vendors, sales, leads, leadCounts, unattributedLeads, months, manualLeadCounts]);
+  }, [vendors, sales, saleCredits, leadCounts, unattributedLeads, months, manualLeadCounts]);
 
   const totals = useMemo(() => {
     const revenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
@@ -493,11 +509,11 @@ export default function AttributionPage() {
   const roiBarAxis = useMemo(() => buildRoiAxis(roiChart.map(d => d.roi)), [roiChart]);
 
   const roiTrend = useMemo(() => buildVendorRoiTrend({
-    leads: trendLeads,
     sales: trendSalesFull,
     vendors,
+    creditsBySaleId: saleCredits,
     months: 12,
-  }), [trendLeads, trendSalesFull, vendors]);
+  }), [trendSalesFull, vendors, saleCredits]);
 
   // Trend points are { month, 'vendor:<id>': number, ... } — pull every
   // numeric series value out so the axis covers all vendor lines at once.
@@ -823,41 +839,13 @@ export default function AttributionPage() {
         <DialogContent className="max-w-4xl">
           {vendorSalesView ? (() => {
             const knownVendorIds = new Set(vendors.map(v => v.id));
-            const allVinToVendors = new Map<string, Set<string>>();
-            const allStockToVendors = new Map<string, Set<string>>();
-            for (const l of leads) {
-              if (l.vendor_id) {
-                if (l.vin) {
-                  const v = l.vin.trim().toUpperCase();
-                  if (v) {
-                    const s = allVinToVendors.get(v) ?? new Set<string>();
-                    s.add(l.vendor_id);
-                    allVinToVendors.set(v, s);
-                  }
-                }
-                if (l.stock_number) {
-                  const sk = l.stock_number.trim().toUpperCase();
-                  if (sk) {
-                    const s = allStockToVendors.get(sk) ?? new Set<string>();
-                    s.add(l.vendor_id);
-                    allStockToVendors.set(sk, s);
-                  }
-                }
-              }
-            }
+            // Reads the same stored credits the vendor table totals come from,
+            // so this list can't disagree with the row that opened it. The
+            // "Unassigned" bucket is simply every sale with no credit at all.
             const list = sales.filter(s => {
-              const vin = s.vin ? s.vin.trim().toUpperCase() : '';
-              const stock = s.stock_number ? s.stock_number.trim().toUpperCase() : '';
-              if (vendorSalesView.id === null) {
-                return !s.vendor_id &&
-                  !(vin && allVinToVendors.has(vin)) &&
-                  !(stock && allStockToVendors.has(stock));
-              }
-              const vid = vendorSalesView.id;
-              if (s.vendor_id === vid) return true;
-              if (!s.vendor_id && vin && allVinToVendors.get(vin)?.has(vid)) return true;
-              if (!s.vendor_id && !vin && stock && allStockToVendors.get(stock)?.has(vid)) return true;
-              return false;
+              const credited = (saleCredits.get(s.id) ?? []).filter(id => knownVendorIds.has(id));
+              if (vendorSalesView.id === null) return credited.length === 0;
+              return credited.includes(vendorSalesView.id);
             }).sort((a, b) => (a.customer_full_name ?? '').localeCompare(b.customer_full_name ?? ''));
             const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
 

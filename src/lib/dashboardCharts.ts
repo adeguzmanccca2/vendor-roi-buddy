@@ -1,4 +1,3 @@
-import { buildVendorLookupMaps, getMatchingVendorIds, type AttributionLeadLike, type AttributionSaleLike } from './attributionMatching';
 
 export interface VendorComparisonLead {
   lead_date?: string | null;
@@ -101,11 +100,8 @@ export function buildVendorComparisonData({
   };
 }
 
-export interface VendorRoiTrendLead extends AttributionLeadLike {
-  lead_date?: string | null;
-}
-
-export interface VendorRoiTrendSale extends AttributionSaleLike {
+export interface VendorRoiTrendSale {
+  id: string;
   sale_date?: string | null;
   sale_price?: number | null;
 }
@@ -121,17 +117,22 @@ export interface VendorRoiTrendPoint {
   [key: string]: number | string;
 }
 
-// ROI trend needs real attribution (VIN/stock/email/phone), unlike the lead-count
-// chart above which only needs a vendor_id already set on the lead/sale.
+// ROI trend reads the STORED credits in sale_attributions rather than
+// re-deriving matches here. Previously this ran its own copy of the
+// VIN/stock/email/phone matching, which meant the chart could disagree with
+// what the matcher had actually recorded -- different rules, different answer,
+// same screen. `creditsBySaleId` maps a sale id to every vendor credited for
+// it, so a sale credited to two vendors contributes its full revenue to both,
+// exactly as the table says.
 export function buildVendorRoiTrend({
-  leads,
   sales,
   vendors,
+  creditsBySaleId,
   months = 12,
 }: {
-  leads: VendorRoiTrendLead[];
   sales: VendorRoiTrendSale[];
   vendors: VendorRoiTrendVendor[];
+  creditsBySaleId: Map<string, string[]>;
   months?: number;
 }) {
   const now = new Date();
@@ -154,7 +155,6 @@ export function buildVendorRoiTrend({
   }));
 
   const knownVendorIds = new Set(vendors.map(v => v.id));
-  const { vinToVendors, stockToVendors, emailToVendors, phoneToVendors } = buildVendorLookupMaps(leads);
 
   const revenueByBucketVendor = new Map<string, Map<string, number>>();
   for (const sale of sales) {
@@ -163,9 +163,7 @@ export function buildVendorRoiTrend({
     const bucketKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
     if (!(bucketKey in buckets)) continue;
 
-    const matches = getMatchingVendorIds({
-      sale, knownVendorIds, vinToVendors, stockToVendors, emailToVendors, phoneToVendors,
-    });
+    const matches = (creditsBySaleId.get(sale.id) ?? []).filter(id => knownVendorIds.has(id));
     if (matches.length === 0) continue;
 
     const byVendor = revenueByBucketVendor.get(bucketKey) ?? new Map<string, number>();
