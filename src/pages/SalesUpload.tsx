@@ -13,8 +13,10 @@ import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Upload as UploadIcon, FileSpreadsheet, AlertTriangle, ChevronDown, ChevronUp } from 'lucide-react';
 import { toast } from 'sonner';
 import {
+  buildDedupHash,
   guessColumn,
   normalizeEmail,
+  normalizeName,
   normalizePhone,
   normalizeRevenue,
   parseLeadDate,
@@ -258,7 +260,27 @@ export default function SalesUploadPage() {
 
           const salePrice = normalizeRevenue(get(row, 'sale_price')) ?? null;
 
+          // Dedup key, matching receive-sales byte for byte: same seven
+          // components in the same order, so a sale pushed by the webhook and
+          // the same sale re-uploaded as CSV collapse to one row instead of
+          // two. `sd` (not the now() fallback below) is hashed deliberately --
+          // hashing the current time would make the key differ on every run
+          // and defeat the whole mechanism for rows with no sale date.
+          //
+          // Note buildDedupHash names its 7th field `lead_date`; it is just
+          // the date slot, and sales pass their sale date into it.
+          const dedupHash = await buildDedupHash({
+            email:        normEmail,
+            phone:        normPhone,
+            name:         normalizeName(fullName),
+            vehicle:      [parsed.year, parsed.make, parsed.model].filter(Boolean).join(' '),
+            vin:          nVin,
+            stock_number: nStock,
+            lead_date:    sd,
+          });
+
           toInsert.push({
+            dedup_hash:          dedupHash,
             organization_id:     activeOrgId,
             raw_upload_id:       upload.id,
             customer_first_name: first    || null,
@@ -304,20 +326,33 @@ export default function SalesUploadPage() {
       console.log(`[SalesUpload] prepared ${toInsert.length} rows, ${rowErrors.length} empty/errored, ${dupesInBatch} within-file dupes`);
       setRowSkips(rowErrors);
 
-      // Dedup is scoped to this file only (see the within-file check above) —
-      // we deliberately do not check against sales already in the database.
       // Strip internal metadata before inserting.
       const dbRows = toInsert.map(({ __nVin, __nStock, __name, __vinRaw, __stockRaw, ...rest }) => rest);
 
       // ── Step 3: Insert clean rows in chunks ────────────────────────────────
+      //
+      // Upsert, not insert. The within-file check above only ever caught
+      // duplicates inside a single upload; re-uploading an export that
+      // overlapped a previous one inserted the same sale again, and under the
+      // multi-vendor model each duplicate then earns its own vendor credits,
+      // so duplicates inflate vendor ROI rather than merely revenue.
+      //
+      // ignoreDuplicates makes the unique index on (organization_id,
+      // dedup_hash) do the work in the database, atomically, rather than
+      // relying on a read-then-write that can race. `inserted` counts the rows
+      // that actually landed, so the toast reports real inserts, and
+      // dbDuplicates is whatever the database turned away.
       let inserted = 0;
       const CHUNK = 25;
 
       for (let i = 0; i < dbRows.length; i += CHUNK) {
         const slice = dbRows.slice(i, i + CHUNK);
         setImportStatus(`Inserting sales ${Math.min(i + CHUNK, dbRows.length)} of ${dbRows.length}...`);
-        const { error: insErr } = await withTimeout(
-          supabase.from('sales').insert(slice),
+        const { data: insData, error: insErr } = await withTimeout(
+          supabase
+            .from('sales')
+            .upsert(slice, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
+            .select('id'),
           `Sales insert starting at row ${i + 1}`,
         );
         if (insErr) {
@@ -328,12 +363,16 @@ export default function SalesUploadPage() {
             `${insErr.hint ? ' — ' + insErr.hint : ''}`,
           );
         }
-        inserted += slice.length;
+        inserted += insData?.length ?? 0;
       }
+
+      const dbDuplicates = dbRows.length - inserted;
 
       // ── Step 4: Update upload record with final counts ─────────────────────
       setImportStatus('Finalizing import...');
-      const totalDupes = dupesInBatch;
+      // Duplicates now come from two places: caught inside this file, and
+      // turned away by the database as already present from an earlier import.
+      const totalDupes = dupesInBatch + dbDuplicates;
       const { error: updateErr } = await withTimeout(
         supabase.from('raw_sales_uploads').update({
           inserted_count:  inserted,
@@ -369,7 +408,8 @@ export default function SalesUploadPage() {
 
       setResult({ inserted, duplicates: totalDupes, skippedRows: dupesDetail, uploadId: upload.id });
       toast.success(
-        `Imported ${inserted} sales · ${totalDupes} duplicates skipped` +
+        `Imported ${inserted} sales · ${totalDupes} duplicate(s) skipped` +
+        (dbDuplicates > 0 ? ` (${dbDuplicates} already imported)` : '') +
         (credited > 0 ? ` · ${credited} vendor credit(s) matched` : ''),
       );
 
