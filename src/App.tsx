@@ -14,6 +14,8 @@ import VendorsPage from '@/pages/Vendors';
 import LeadsPage from '@/pages/Leads';
 import UploadPage from '@/pages/Upload';
 import SalesUploadPage from '@/pages/SalesUpload';
+import SalesDedupCleanupPage from '@/pages/SalesDedupCleanup';
+import ImportLogsPage from '@/pages/ImportLogs';
 import SalesPage from '@/pages/Sales';
 import AttributionPage from '@/pages/Attribution';
 import FixAttributionPage from '@/pages/FixAttribution';
@@ -95,6 +97,22 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><SalesUploadPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/sales/dedup-cleanup"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><SalesDedupCleanupPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/sales/import-logs"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><ImportLogsPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />

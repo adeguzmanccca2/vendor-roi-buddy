@@ -467,6 +467,12 @@ export default function SalesPage() {
           >
             <CalendarX className="mr-2 h-4 w-4" /> Delete by date
           </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/sales/dedup-cleanup">Fix duplicate sales</Link>
+          </Button>
+          <Button variant="outline" size="sm" asChild>
+            <Link to="/sales/import-logs">Import Logs</Link>
+          </Button>
         </div>
       </div>
 
