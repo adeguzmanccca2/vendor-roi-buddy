@@ -77,8 +77,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const brevoApiKey = process.env.BREVO_API_KEY;
 
   if (!supabaseUrl || !serviceRoleKey || !brevoApiKey) {
-    console.error('[auth/reset-password] missing SUPABASE_URL / SUPABASE_SERVICE_ROLE_KEY / BREVO_API_KEY');
-    return res.status(500).json({ error: 'Password reset is not configured' });
+    // Name the specific missing variables rather than all three -- a generic
+    // "one of these is missing" message means digging through the Vercel
+    // dashboard to work out which. Names only, never values.
+    const missing = [
+      !supabaseUrl && 'SUPABASE_URL',
+      !serviceRoleKey && 'SUPABASE_SERVICE_ROLE_KEY',
+      !brevoApiKey && 'BREVO_API_KEY',
+    ].filter(Boolean);
+    console.error(`[auth/reset-password] missing env var(s): ${missing.join(', ')}`);
+    return res.status(500).json({
+      error: `Password reset is not configured (missing: ${missing.join(', ')})`,
+    });
   }
 
   const rawEmail = typeof req.body?.email === 'string' ? req.body.email : '';
