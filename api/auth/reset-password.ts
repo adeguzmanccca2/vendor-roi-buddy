@@ -133,8 +133,18 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // found" this is not something the caller could have caused, and
       // silently claiming success would leave them waiting for an email that
       // is never going to arrive.
+      //
+      // Brevo's own message is included in the response, not just the server
+      // log: its failures are operational (unverified sender, revoked key,
+      // quota exhausted) and each needs a different fix, so hiding which one
+      // it is turns every incident into a log-diving expedition. It reveals
+      // nothing sensitive -- no key material, only the sender address and
+      // account state.
       console.error('[auth/reset-password] Brevo send failed:', sent.error);
-      return res.status(502).json({ error: 'Could not send the reset email. Please try again shortly.' });
+      return res.status(502).json({
+        error: 'Could not send the reset email.',
+        detail: sent.error,
+      });
     }
 
     return res.status(200).json({ ok: true });
