@@ -64,17 +64,36 @@ export default function AuthPage() {
     if (!emailRes.success) return toast.error(emailRes.error.errors[0].message);
 
     setBusy(true);
-    const { error } = await supabase.auth.resetPasswordForEmail(emailRes.data, {
-      redirectTo: `${window.location.origin}/reset-password`,
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message);
-      return;
+    try {
+      // Goes through our own endpoint rather than
+      // supabase.auth.resetPasswordForEmail: Supabase's SMTP relay fails to
+      // authenticate to Brevo and returns 500 "Error sending recovery email".
+      // /api/auth/reset-password mints the same recovery link server-side and
+      // delivers it over Brevo's REST API, which is the path invites already
+      // use successfully. See api/auth/reset-password.ts.
+      const res = await fetch('/api/auth/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailRes.data }),
+      });
+
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        toast.error(body?.error ?? 'Could not send the reset email. Please try again.');
+        return;
+      }
+
+      // Deliberately the same message whether or not an account exists —
+      // the endpoint reports success either way so this page can't be used
+      // to discover which email addresses are registered.
+      toast.success('If that email has an account, a reset link is on its way.');
+      setForgotEmail('');
+      setLoginView('signin');
+    } catch {
+      toast.error('Could not reach the server. Please check your connection and try again.');
+    } finally {
+      setBusy(false);
     }
-    toast.success('Check your email for a reset link');
-    setForgotEmail('');
-    setLoginView('signin');
   };
 
   const handleSignup = async (e: React.FormEvent) => {
