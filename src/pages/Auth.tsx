@@ -11,8 +11,9 @@ import { toast } from 'sonner';
 import { getSupabaseErrorMessage } from '@/lib/supabaseError';
 
 const emailSchema = z.string().trim().email({ message: 'Invalid email' }).max(255);
+const codeSchema = z.string().trim().regex(/^\d{6}$/, { message: 'Enter the 6-digit code' });
 
-type LoginView = 'signin' | 'forgot';
+type LoginView = 'signin' | 'code' | 'forgot';
 
 export default function AuthPage() {
   const navigate = useNavigate();
@@ -24,6 +25,9 @@ export default function AuthPage() {
   const [loginEmail, setLoginEmail] = useState('');
   const [loginPassword, setLoginPassword] = useState('');
 
+  // two-factor code
+  const [code, setCode] = useState('');
+
   // forgot password
   const [forgotEmail, setForgotEmail] = useState('');
 
@@ -32,6 +36,11 @@ export default function AuthPage() {
     if (!loading && user) navigate('/', { replace: true });
   }, [user, loading, navigate]);
 
+  // Step 1: the password is checked SERVER-side by /api/auth/login-request,
+  // which discards the session it gets back. Nothing is established in the
+  // browser here, so there is no authenticated state sitting behind the code
+  // screen waiting to be skipped -- the session only comes into existence in
+  // handleVerifyCode below.
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     const emailRes = emailSchema.safeParse(loginEmail);
@@ -39,13 +48,47 @@ export default function AuthPage() {
     if (!loginPassword) return toast.error('Password required');
 
     setBusy(true);
-    const { error } = await supabase.auth.signInWithPassword({
-      email: emailRes.data,
-      password: loginPassword,
+    try {
+      const res = await fetch('/api/auth/login-request', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ email: emailRes.data, password: loginPassword }),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(body?.detail ? `${body.error} ${body.detail}` : (body?.error ?? 'Could not sign in'));
+        return;
+      }
+
+      setCode('');
+      setLoginView('code');
+      toast.success('We emailed you a 6-digit sign-in code');
+    } catch {
+      toast.error('Could not reach the server. Please check your connection and try again.');
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  // Step 2: exchanging the emailed code for the actual session. Supabase
+  // minted this code (via generateLink server-side) so it owns its expiry,
+  // single use and attempt limits -- we only changed how it was delivered.
+  const handleVerifyCode = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const codeRes = codeSchema.safeParse(code);
+    if (!codeRes.success) return toast.error(codeRes.error.errors[0].message);
+
+    setBusy(true);
+    const { error } = await supabase.auth.verifyOtp({
+      email: emailSchema.parse(loginEmail),
+      token: codeRes.data,
+      type: 'magiclink',
     });
     setBusy(false);
+
     if (error) {
-      toast.error(error.message === 'Invalid login credentials' ? 'Invalid email or password' : getSupabaseErrorMessage(error));
+      toast.error(getSupabaseErrorMessage(error) || 'That code is invalid or has expired');
       return;
     }
     toast.success('Signed in');
@@ -101,7 +144,50 @@ export default function AuthPage() {
             self-registration is also disabled server-side, so removing this
             form isn't cosmetic -- there is no open signup path behind it. */}
         <CardContent>
-          {loginView === 'signin' ? (
+          {loginView === 'code' ? (
+                <form onSubmit={handleVerifyCode} className="space-y-4 pt-4">
+                  <div className="space-y-1">
+                    <h2 className="text-lg font-semibold">Enter your sign-in code</h2>
+                    <p className="text-sm text-muted-foreground">
+                      We emailed a 6-digit code to{' '}
+                      <span className="font-medium text-foreground">{loginEmail}</span>.
+                    </p>
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="login-code">Verification code</Label>
+                    <Input
+                      id="login-code"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={6}
+                      placeholder="123456"
+                      value={code}
+                      onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      autoFocus
+                    />
+                  </div>
+                  <Button type="submit" className="w-full" disabled={busy}>
+                    {busy ? 'Verifying...' : 'Verify & Sign In'}
+                  </Button>
+                  <div className="flex items-center justify-between text-sm">
+                    <button
+                      type="button"
+                      onClick={handleLogin}
+                      disabled={busy}
+                      className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      Resend code
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setLoginView('signin'); setCode(''); setLoginPassword(''); }}
+                      className="text-muted-foreground underline-offset-4 hover:text-foreground hover:underline"
+                    >
+                      ← Back to sign in
+                    </button>
+                  </div>
+                </form>
+              ) : loginView === 'signin' ? (
                 <form onSubmit={handleLogin} className="space-y-4 pt-4">
                   <div className="space-y-2">
                     <Label htmlFor="login-email">Email</Label>
