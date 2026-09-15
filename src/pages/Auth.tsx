@@ -11,7 +11,12 @@ import { toast } from 'sonner';
 import { getSupabaseErrorMessage } from '@/lib/supabaseError';
 
 const emailSchema = z.string().trim().email({ message: 'Invalid email' }).max(255);
-const codeSchema = z.string().trim().regex(/^\d{6}$/, { message: 'Enter the 6-digit code' });
+// Length is deliberately a range, not a fixed 6. Supabase's OTP length is a
+// project setting (Authentication -> Providers -> Email) and this project
+// uses 8 -- hardcoding 6 silently truncated the code and every sign-in failed
+// as "invalid or expired". A range keeps this working if that setting changes.
+const codeSchema = z.string().trim().regex(/^\d{4,10}$/, { message: 'Enter the code from your email' });
+const MAX_CODE_LENGTH = 10;
 
 type LoginView = 'signin' | 'code' | 'forgot';
 
@@ -63,7 +68,7 @@ export default function AuthPage() {
 
       setCode('');
       setLoginView('code');
-      toast.success('We emailed you a 6-digit sign-in code');
+      toast.success('We emailed you a sign-in code');
     } catch {
       toast.error('Could not reach the server. Please check your connection and try again.');
     } finally {
@@ -149,7 +154,7 @@ export default function AuthPage() {
                   <div className="space-y-1">
                     <h2 className="text-lg font-semibold">Enter your sign-in code</h2>
                     <p className="text-sm text-muted-foreground">
-                      We emailed a 6-digit code to{' '}
+                      We emailed a sign-in code to{' '}
                       <span className="font-medium text-foreground">{loginEmail}</span>.
                     </p>
                   </div>
@@ -159,10 +164,10 @@ export default function AuthPage() {
                       id="login-code"
                       inputMode="numeric"
                       autoComplete="one-time-code"
-                      maxLength={6}
-                      placeholder="123456"
+                      maxLength={MAX_CODE_LENGTH}
+                      placeholder="Code from your email"
                       value={code}
-                      onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                      onChange={e => setCode(e.target.value.replace(/\D/g, '').slice(0, MAX_CODE_LENGTH))}
                       autoFocus
                     />
                   </div>

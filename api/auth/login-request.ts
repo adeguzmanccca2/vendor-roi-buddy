@@ -1,4 +1,4 @@
-// Step 1 of two-factor login: verify the password, then email a 6-digit code.
+// Step 1 of two-factor login: verify the password, then email a one-time code.
 //
 // WHY the password is checked HERE rather than in the browser: if the client
 // called signInWithPassword() it would immediately hold a fully valid
