@@ -23,7 +23,6 @@ import {
 } from 'recharts';
 import { ExpandableChartCard } from '@/components/ExpandableChartCard';
 import { StatCard } from '@/components/StatCard';
-import { Input } from '@/components/ui/input';
 import { downloadCsv } from '@/lib/exportCsv';
 import { buildVendorRoiTrend } from '@/lib/dashboardCharts';
 import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
@@ -170,6 +169,21 @@ function monthOptions(count = 24): { value: `m:${string}`; label: string }[] {
     const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
     const value = `m:${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}` as const;
     const label = d.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
+    out.push({ value, label });
+  }
+  return out;
+}
+
+// Bare "YYYY-MM" (no "m:" prefix) for the custom-range From/To selects —
+// customFrom/customTo are stored unprefixed and combined into "c:<from>:<to>"
+// by applyCustomRange, so this must not reuse monthOptions()'s "m:" values.
+function bareMonthOptions(count = 36): { value: string; label: string }[] {
+  const now = new Date();
+  const out: { value: string; label: string }[] = [];
+  for (let i = 0; i < count; i++) {
+    const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
+    const value = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+    const label = d.toLocaleDateString(undefined, { month: 'short', year: 'numeric' });
     out.push({ value, label });
   }
   return out;
@@ -605,17 +619,30 @@ export default function AttributionPage() {
             </SelectContent>
           </Select>
 
-          {/* Custom range: pick a beginning and end month, then Apply. */}
+          {/* Custom range: pick a beginning and end month, then Apply.
+              Two Selects rather than native <input type="month"> — that
+              renders inconsistently across browsers (stretched placeholder
+              dashes, misaligned calendar icon) and doesn't match the rest of
+              this toolbar, which already uses Select for the main period
+              picker. */}
           <div className="flex items-center gap-1">
-            <Input
-              type="month" className="w-36 text-xs" title="From month"
-              value={customFrom} onChange={e => setCustomFrom(e.target.value)}
-            />
+            <Select value={customFrom} onValueChange={setCustomFrom}>
+              <SelectTrigger className="w-32 text-xs" title="From month"><SelectValue placeholder="From" /></SelectTrigger>
+              <SelectContent>
+                {bareMonthOptions(36).map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <span className="text-xs text-muted-foreground">to</span>
-            <Input
-              type="month" className="w-36 text-xs" title="To month"
-              value={customTo} onChange={e => setCustomTo(e.target.value)}
-            />
+            <Select value={customTo} onValueChange={setCustomTo}>
+              <SelectTrigger className="w-32 text-xs" title="To month"><SelectValue placeholder="To" /></SelectTrigger>
+              <SelectContent>
+                {bareMonthOptions(36).map(m => (
+                  <SelectItem key={m.value} value={m.value}>{m.label}</SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
             <Button variant="outline" size="sm" onClick={applyCustomRange} disabled={!customFrom || !customTo}>
               Apply
             </Button>
