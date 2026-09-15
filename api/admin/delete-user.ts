@@ -46,18 +46,27 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
     // 2. Are they an admin? Checked against user_roles rather than trusting
     // anything sent by the client.
-    const { data: roleRow, error: roleErr } = await admin
+    //
+    // Deliberately limit(1) rather than maybeSingle(): nothing guarantees a
+    // user has only one 'admin' row, and maybeSingle() errors outright when
+    // it finds more than one. Duplicates are irrelevant to the question being
+    // asked -- "does this user have the admin role at all" -- and should not
+    // be able to block a legitimate admin.
+    const { data: roleRows, error: roleErr } = await admin
       .from('user_roles')
       .select('role')
       .eq('user_id', caller.user.id)
       .eq('role', 'admin')
-      .maybeSingle();
+      .limit(1);
 
     if (roleErr) {
       console.error('[admin/delete-user] role check failed:', roleErr.message);
-      return res.status(500).json({ error: 'Could not verify permissions' });
+      return res.status(500).json({
+        error: 'Could not verify permissions',
+        detail: roleErr.message,
+      });
     }
-    if (!roleRow) {
+    if (!roleRows || roleRows.length === 0) {
       return res.status(403).json({ error: 'Admin role required' });
     }
 

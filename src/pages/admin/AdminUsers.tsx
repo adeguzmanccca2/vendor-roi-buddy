@@ -121,7 +121,10 @@ export default function AdminUsers() {
       const body = await res.json().catch(() => ({}));
 
       if (!res.ok) {
-        toast.error(body?.error ?? 'Could not delete the user');
+        // `detail` carries the underlying database/auth message when there is
+        // one -- without it, an operational failure is indistinguishable from
+        // a permissions problem.
+        toast.error(body?.detail ? `${body.error}: ${body.detail}` : (body?.error ?? 'Could not delete the user'));
         return;
       }
 
