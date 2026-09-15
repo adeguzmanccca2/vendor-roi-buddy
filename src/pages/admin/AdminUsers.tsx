@@ -5,10 +5,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog';
 import { toast } from 'sonner';
-import { ShieldPlus, ShieldOff, UserPlus, Building2, Copy, X, Mail, RefreshCw } from 'lucide-react';
+import { ShieldPlus, ShieldOff, UserPlus, Building2, Copy, X, Mail, RefreshCw, Trash2 } from 'lucide-react';
 import InviteUserDialog from '@/components/InviteUserDialog';
 import UserOrgsDialog from '@/components/UserOrgsDialog';
+import { useAuth } from '@/hooks/useAuth';
 
 interface ProfileRow {
   id: string;
@@ -32,6 +43,7 @@ interface InvitationRow {
 }
 
 export default function AdminUsers() {
+  const { user: currentUser } = useAuth();
   const [profiles, setProfiles] = useState<ProfileRow[]>([]);
   const [orgs, setOrgs] = useState<Org[]>([]);
   const [roles, setRoles] = useState<RoleRow[]>([]);
@@ -42,6 +54,8 @@ export default function AdminUsers() {
   const [inviteOpen, setInviteOpen] = useState(false);
   const [resendData, setResendData] = useState<{ email: string; role: 'admin' | 'client'; orgIds: string[] } | null>(null);
   const [orgsDialog, setOrgsDialog] = useState<{ id: string; label: string } | null>(null);
+  const [deleteTarget, setDeleteTarget] = useState<{ userId: string; label: string } | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   const load = async () => {
     setLoading(true);
@@ -80,6 +94,45 @@ export default function AdminUsers() {
       toast.success('Admin role removed');
     }
     load();
+  };
+
+  // Deleting an auth user needs the service-role key, so it goes through
+  // /api/admin/delete-user rather than the client. That endpoint re-verifies
+  // the caller's admin role server-side -- this UI gating is convenience, not
+  // the actual control.
+  const deleteUser = async () => {
+    if (!deleteTarget) return;
+    setDeleting(true);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        toast.error('Your session has expired. Please sign in again.');
+        return;
+      }
+
+      const res = await fetch('/api/admin/delete-user', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ userId: deleteTarget.userId }),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(body?.error ?? 'Could not delete the user');
+        return;
+      }
+
+      toast.success(`Deleted ${deleteTarget.label}`);
+      setDeleteTarget(null);
+      load();
+    } catch {
+      toast.error('Could not reach the server. Please try again.');
+    } finally {
+      setDeleting(false);
+    }
   };
 
   const copyInviteLink = async (token: string) => {
@@ -199,6 +252,22 @@ export default function AdminUsers() {
                                   <ShieldPlus className="mr-1 h-4 w-4" /> Make admin
                                 </Button>
                               )}
+                              {/* Deleting yourself could lock the last admin
+                                  out, so it is disabled here and refused by
+                                  the endpoint as well. */}
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+                                disabled={p.user_id === currentUser?.id}
+                                title={p.user_id === currentUser?.id ? 'You cannot delete your own account' : undefined}
+                                onClick={() => setDeleteTarget({
+                                  userId: p.user_id,
+                                  label: p.full_name ?? p.email ?? p.user_id,
+                                })}
+                              >
+                                <Trash2 className="mr-1 h-4 w-4" /> Delete
+                              </Button>
                             </TableCell>
                           </TableRow>
                         );
@@ -296,6 +365,38 @@ export default function AdminUsers() {
         orgs={orgs}
         onSaved={load}
       />
+
+      <AlertDialog open={deleteTarget !== null} onOpenChange={v => !v && setDeleteTarget(null)}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle>Delete {deleteTarget?.label}?</AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="space-y-2 text-sm text-muted-foreground">
+                <p>
+                  This permanently deletes the account, its profile, its roles and its
+                  dealership memberships. They will immediately lose access and cannot
+                  sign in again.
+                </p>
+                <p>
+                  Leads, sales and attributions they imported are <strong>not</strong> deleted —
+                  that data belongs to the dealership, not the user.
+                </p>
+                <p>This cannot be undone. To restore access you would have to invite them again.</p>
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={deleting}>Cancel</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={e => { e.preventDefault(); deleteUser(); }}
+              disabled={deleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {deleting ? 'Deleting...' : 'Delete user'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </div>
   );
 }
