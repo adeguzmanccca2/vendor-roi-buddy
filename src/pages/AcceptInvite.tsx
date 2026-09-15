@@ -86,41 +86,48 @@ export default function AcceptInvite() {
     if (!pwRes.success) return toast.error('Password must be at least 8 characters');
 
     setBusy(true);
-    const { error } = await supabase.auth.signUp({
-      email: invitation.email,
-      password: pwRes.data,
-      options: {
-        data: { full_name: nameRes.data },
-      },
-    });
-    if (error) {
-      setBusy(false);
-      // If they already have an account, fall through to sign-in path
-      if (error.message.toLowerCase().includes('registered')) {
-        const { error: signInErr } = await supabase.auth.signInWithPassword({
-          email: invitation.email,
-          password: pwRes.data,
-        });
-        if (signInErr) {
-          toast.error('Account exists. Please sign in with your existing password on the sign-in page.');
-          navigate('/auth');
-          return;
-        }
-        await acceptAfterAuth();
+    try {
+      // Account creation happens server-side via the service-role key rather
+      // than supabase.auth.signUp(). That endpoint is public self-registration,
+      // which is now disabled -- see api/auth/accept-invite-signup.ts. The
+      // email comes from the invitation row there, not from this form, so an
+      // invite can only ever create the account it was issued for.
+      const res = await fetch('/api/auth/accept-invite-signup', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token, password: pwRes.data, fullName: nameRes.data }),
+      });
+      const body = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        toast.error(body?.error ?? 'Could not create your account. Please try again.');
         return;
       }
-      toast.error(error.message);
-      return;
-    }
-    // Email confirmation is disabled for this project, so signUp returns a session immediately.
-    const { data: sess } = await supabase.auth.getSession();
-    if (sess.session) {
+
+      // Sign in with the password just set. This is also the path taken when
+      // the account already existed, in which case the typed password has to
+      // be their existing one.
+      const { error: signInErr } = await supabase.auth.signInWithPassword({
+        email: invitation.email,
+        password: pwRes.data,
+      });
+
+      if (signInErr) {
+        toast.error(
+          body?.alreadyExisted
+            ? 'An account already exists for this email. Please sign in with your existing password.'
+            : 'Account created, but sign-in failed. Please sign in to continue.',
+        );
+        navigate('/auth');
+        return;
+      }
+
       await acceptAfterAuth();
-    } else {
-      toast.error('Could not start a session after signup. Please try signing in.');
-      navigate('/auth');
+    } catch {
+      toast.error('Could not reach the server. Please check your connection and try again.');
+    } finally {
+      setBusy(false);
     }
-    setBusy(false);
   };
 
   // The signed-in account must be the invited address, or accept_invitation will reject it.

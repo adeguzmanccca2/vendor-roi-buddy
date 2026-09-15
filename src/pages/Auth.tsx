@@ -4,7 +4,6 @@ import { z } from 'zod';
 import { supabase } from '@/integrations/supabase/client';
 import { useAuth } from '@/hooks/useAuth';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Button } from '@/components/ui/button';
@@ -12,8 +11,6 @@ import { toast } from 'sonner';
 import { getSupabaseErrorMessage } from '@/lib/supabaseError';
 
 const emailSchema = z.string().trim().email({ message: 'Invalid email' }).max(255);
-const passwordSchema = z.string().min(8, { message: 'Password must be at least 8 characters' }).max(72);
-const nameSchema = z.string().trim().min(1, { message: 'Name required' }).max(100);
 
 type LoginView = 'signin' | 'forgot';
 
@@ -30,10 +27,6 @@ export default function AuthPage() {
   // forgot password
   const [forgotEmail, setForgotEmail] = useState('');
 
-  // signup
-  const [signupName, setSignupName] = useState('');
-  const [signupEmail, setSignupEmail] = useState('');
-  const [signupPassword, setSignupPassword] = useState('');
 
   useEffect(() => {
     if (!loading && user) navigate('/', { replace: true });
@@ -96,32 +89,6 @@ export default function AuthPage() {
     }
   };
 
-  const handleSignup = async (e: React.FormEvent) => {
-    e.preventDefault();
-    const nameRes = nameSchema.safeParse(signupName);
-    const emailRes = emailSchema.safeParse(signupEmail);
-    const pwRes = passwordSchema.safeParse(signupPassword);
-    if (!nameRes.success) return toast.error(nameRes.error.errors[0].message);
-    if (!emailRes.success) return toast.error(emailRes.error.errors[0].message);
-    if (!pwRes.success) return toast.error(pwRes.error.errors[0].message);
-
-    setBusy(true);
-    const { error } = await supabase.auth.signUp({
-      email: emailRes.data,
-      password: pwRes.data,
-      options: {
-        emailRedirectTo: `${window.location.origin}/`,
-        data: { full_name: nameRes.data },
-      },
-    });
-    setBusy(false);
-    if (error) {
-      toast.error(error.message.includes('already registered') ? 'Email already registered' : getSupabaseErrorMessage(error));
-      return;
-    }
-    toast.success('Check your email to verify your account before signing in.');
-  };
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
@@ -129,15 +96,12 @@ export default function AuthPage() {
           <CardTitle className="text-2xl">Vendor ROI Tracker</CardTitle>
           <p className="text-sm text-muted-foreground">Multi-dealership attribution platform</p>
         </CardHeader>
+        {/* Sign-up is deliberately absent: accounts are created only by
+            invitation (admin Invite User -> /accept-invite). Public
+            self-registration is also disabled server-side, so removing this
+            form isn't cosmetic -- there is no open signup path behind it. */}
         <CardContent>
-          <Tabs defaultValue="login">
-            <TabsList className="grid w-full grid-cols-2">
-              <TabsTrigger value="login">Sign In</TabsTrigger>
-              <TabsTrigger value="signup">Sign Up</TabsTrigger>
-            </TabsList>
-
-            <TabsContent value="login">
-              {loginView === 'signin' ? (
+          {loginView === 'signin' ? (
                 <form onSubmit={handleLogin} className="space-y-4 pt-4">
                   <div className="space-y-2">
                     <Label htmlFor="login-email">Email</Label>
@@ -190,34 +154,12 @@ export default function AuthPage() {
                       ← Back to sign in
                     </button>
                   </div>
-                </form>
-              )}
-            </TabsContent>
-
-            <TabsContent value="signup">
-              <form onSubmit={handleSignup} className="space-y-4 pt-4">
-                <div className="space-y-2">
-                  <Label htmlFor="signup-name">Full name</Label>
-                  <Input id="signup-name" value={signupName} onChange={e => setSignupName(e.target.value)} autoComplete="name" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-email">Email</Label>
-                  <Input id="signup-email" type="email" value={signupEmail} onChange={e => setSignupEmail(e.target.value)} autoComplete="email" />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="signup-password">Password</Label>
-                  <Input id="signup-password" type="password" value={signupPassword} onChange={e => setSignupPassword(e.target.value)} autoComplete="new-password" />
-                  <p className="text-xs text-muted-foreground">At least 8 characters.</p>
-                </div>
-                <Button type="submit" className="w-full" disabled={busy}>
-                  {busy ? 'Creating account...' : 'Create Account'}
-                </Button>
-                <p className="text-xs text-muted-foreground text-center">
-                  You'll need to verify your email before signing in.
-                </p>
-              </form>
-            </TabsContent>
-          </Tabs>
+            </form>
+          )}
+          <p className="mt-6 text-center text-xs text-muted-foreground">
+            Accounts are created by invitation only. Contact your administrator
+            if you need access.
+          </p>
         </CardContent>
       </Card>
     </div>
