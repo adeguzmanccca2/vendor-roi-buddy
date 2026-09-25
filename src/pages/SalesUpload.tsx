@@ -553,10 +553,10 @@ export default function SalesUploadPage() {
                   <span className="rounded-md border bg-muted px-3 py-1.5 font-medium">
                     📥 {rows.length} rows parsed
                   </span>
-                  <span className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 font-medium text-green-800">
+                  <span className="rounded-md border border-green-200 bg-green-50 px-3 py-1.5 font-medium text-green-800 dark:border-green-900 dark:bg-green-950/40 dark:text-green-300">
                     ✅ {result.inserted} inserted
                   </span>
-                  <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 font-medium text-amber-800">
+                  <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
                     ⚠️ {result.duplicates} duplicates skipped
                   </span>
                 </div>
@@ -591,7 +591,7 @@ export default function SalesUploadPage() {
                                 <td className="px-2 py-1">{s.name || '—'}</td>
                                 <td className="px-2 py-1 font-mono">{s.vin || '—'}</td>
                                 <td className="px-2 py-1">{s.stock || '—'}</td>
-                                <td className="px-2 py-1 text-amber-700">{s.reason}</td>
+                                <td className="px-2 py-1 text-amber-700 dark:text-amber-400">{s.reason}</td>
                                 <td className="px-2 py-1 text-muted-foreground">{s.matchedOn}</td>
                               </tr>
                             ))}

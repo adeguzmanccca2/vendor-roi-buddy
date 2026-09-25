@@ -21,6 +21,10 @@
   <meta property="og:description" content="Track marketing vendor performance and ROI for auto dealerships">
   <meta name="twitter:description" content="Track marketing vendor performance and ROI for auto dealerships">
   <link rel="icon" type="image/x-icon" href="/favicon.ico">
+    <!-- Apply the saved theme before React loads so dark mode doesn't flash light. Key matches THEME_STORAGE_KEY. -->
+    <script>
+      try { if (localStorage.getItem('vroi.theme') === 'dark') document.documentElement.classList.add('dark'); } catch (e) {}
+    </script>
 </head>
 
   <body>

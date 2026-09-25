@@ -916,10 +916,10 @@ export default function UploadPage() {
             <span className="rounded-md border bg-muted px-3 py-1.5 font-medium">
               ✅ {cleanRows.length} clean rows ready
             </span>
-            <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 font-medium text-amber-800">
+            <span className="rounded-md border border-amber-200 bg-amber-50 px-3 py-1.5 font-medium text-amber-800 dark:border-amber-900 dark:bg-amber-950/40 dark:text-amber-300">
               ⚠️ {detectedDupes.filter(d => !d.reinstated).length} will be skipped
             </span>
-            <span className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 font-medium text-blue-800">
+            <span className="rounded-md border border-blue-200 bg-blue-50 px-3 py-1.5 font-medium text-blue-800 dark:border-blue-900 dark:bg-blue-950/40 dark:text-blue-300">
               🔄 {detectedDupes.filter(d => d.reinstated).length} reinstated by you
             </span>
           </div>
@@ -951,7 +951,7 @@ export default function UploadPage() {
                     <td className="px-2 py-2 font-mono text-muted-foreground">{d.vin || '—'}</td>
                     <td className="px-2 py-2 text-muted-foreground">{d.stock || '—'}</td>
                     <td className="px-2 py-2 text-muted-foreground">{d.leadDate || '—'}</td>
-                    <td className="px-2 py-2 text-amber-700">{d.reason}</td>
+                    <td className="px-2 py-2 text-amber-700 dark:text-amber-400">{d.reason}</td>
                     <td className="px-2 py-2 text-muted-foreground">{d.matchedOn}</td>
                   </tr>
                 ))}
