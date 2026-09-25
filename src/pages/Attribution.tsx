@@ -1185,12 +1185,17 @@ function SalesSummaryTip({ row }: { row: VendorPerf }) {
         <div className="flex items-center justify-between rounded bg-sky-100 px-2 py-1 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">
           <span>Net</span><span className="font-semibold">{fmtMoney(row.revenue)}</span>
         </div>
-        {row.salesShared > 0 && (
+        {!unassigned && (row.salesShared > 0 ? (
           <div className="rounded bg-amber-100 px-2 py-1 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
             <span className="font-semibold">{row.salesShared} shared with other vendors</span>, split equally, so
             this vendor counts {fmtCount(row.sales)} of its {row.salesCredited} sales.
           </div>
-        )}
+        ) : (
+          <div className="rounded bg-amber-100 px-2 py-1 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="font-semibold">0 shared with other vendors</span>: all {row.salesCredited} sale
+            {row.salesCredited === 1 ? ' is' : 's are'} credited to {row.vendorName} alone.
+          </div>
+        ))}
       </div>
       <p className="mt-2 text-muted-foreground">Click to see the sales.</p>
     </TooltipContent>

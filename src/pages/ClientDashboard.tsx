@@ -17,6 +17,7 @@ import { downloadCsv } from '@/lib/exportCsv';
 import { buildRevenueTrend, buildRoasRoiTrend, buildVendorComparisonData, type VendorComparisonSeries } from '@/lib/dashboardCharts';
 import { RoasRoiTrendChart } from '@/components/RoasRoiTrendChart';
 import { RevenueTrendChart } from '@/components/RevenueTrendChart';
+import { VendorLeadsChart } from '@/components/VendorLeadsChart';
 import { useAvgGrossByMonth } from '@/hooks/useAvgGrossByMonth';
 import { avgGrossForSale } from '@/lib/avgGross';
 import { formatCompactMoney } from '@/lib/utils';
@@ -364,6 +365,16 @@ export default function ClientDashboard() {
           description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses net revenue; ROI uses gross revenue (net + avg gross × sales). Months with no attributed sales are left blank."
         >
           <RoasRoiTrendChart data={roasRoiTrend} />
+        </ExpandableChartCard>
+
+        <ExpandableChartCard
+          title={`Leads by vendor — ${chartLabel}`}
+          description="Leads each vendor sent per month, by lead date. Each bar stacks the vendors; hover a month for the counts."
+        >
+          <VendorLeadsChart
+            data={comparison.data}
+            series={comparison.series.filter(sr => sr.key.startsWith('vendor:'))}
+          />
         </ExpandableChartCard>
 
         <ExpandableChartCard
