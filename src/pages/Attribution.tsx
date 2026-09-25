@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectGroup, SelectItem, SelectLabel, SelectTrig
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '@/components/ui/dialog';
 import {
   TrendingUp, TrendingDown, Minus, DollarSign, ShoppingCart, Target, Download, Pencil, Info,
+  ArrowUp, ArrowDown, ArrowUpDown, Calculator,
 } from 'lucide-react';
 import {
   Tooltip as UITooltip,
@@ -24,9 +25,13 @@ import {
 import { ExpandableChartCard } from '@/components/ExpandableChartCard';
 import { StatCard } from '@/components/StatCard';
 import { downloadCsv } from '@/lib/exportCsv';
-import { buildVendorRoiTrend } from '@/lib/dashboardCharts';
+import { buildRoasRoiTrend, buildVendorRoiTrend } from '@/lib/dashboardCharts';
+import { RoasRoiTrendChart } from '@/components/RoasRoiTrendChart';
+import { useAvgGrossByMonth } from '@/hooks/useAvgGrossByMonth';
 import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 import { formatCompactMoney } from '@/lib/utils';
+import { avgGrossForSale } from '@/lib/avgGross';
+import { AvgGrossDialog } from '@/components/AvgGrossDialog';
 
 interface Vendor { id: string; name: string; monthly_cost: number | null }
 interface SaleRow {
@@ -72,12 +77,65 @@ interface VendorPerf {
   leads: number;
   sales: number;
   revenue: number;
+  grossRevenue: number;
+  // Whole number of sales this vendor is credited on, and how many of those
+  // are shared with other vendors (sales above is the split share).
+  salesCredited: number;
+  salesShared: number;
   cost: number;
   cpl: number;
   cpa: number;
   closeRate: number;
   roi: number;
+  // Same formula as roi, on grossRevenue instead of net revenue.
+  grossRoi: number;
   category: 'CUT' | 'OPTIMIZE' | 'SCALE' | 'NONE';
+}
+
+type PerfSortKey = 'vendorName' | 'leads' | 'sales' | 'closeRate' | 'cost' | 'cpl' | 'cpa' | 'revenue' | 'grossRevenue' | 'roi' | 'grossRoi' | 'category';
+
+// Action column sorts by recommendation strength, not alphabetically.
+const CATEGORY_RANK: Record<VendorPerf['category'], number> = { SCALE: 3, OPTIMIZE: 2, CUT: 1, NONE: 0 };
+
+// Value a column sorts on, or null when the cell renders as "—" (no cost, or
+// nothing to divide by). Nulls always sink to the bottom in either direction
+// so the table doesn't lead with blank rows.
+function perfSortValue(r: VendorPerf, k: PerfSortKey): number | string | null {
+  switch (k) {
+    case 'vendorName': return r.vendorName.toLowerCase();
+    case 'category': return CATEGORY_RANK[r.category];
+    case 'cost': return r.cost > 0 ? r.cost : null;
+    case 'cpl': return r.cpl > 0 ? r.cpl : null;
+    case 'cpa': return r.cpa > 0 ? r.cpa : null;
+    case 'roi': return r.cost > 0 ? r.roi : null;
+    case 'grossRoi': return r.cost > 0 ? r.grossRoi : null;
+    default: return r[k];
+  }
+}
+
+function PerfSortHeader({
+  label, k, sortKey, sortDir, onClick, align = 'right', children,
+}: {
+  label: string; k: PerfSortKey; sortKey: PerfSortKey; sortDir: 'asc' | 'desc';
+  onClick: (k: PerfSortKey) => void; align?: 'left' | 'right' | 'center'; children?: React.ReactNode;
+}) {
+  const active = sortKey === k;
+  const Icon = !active ? ArrowUpDown : sortDir === 'asc' ? ArrowUp : ArrowDown;
+  const [textAlign, justify] =
+    align === 'right' ? ['text-right', 'justify-end']
+    : align === 'center' ? ['text-center', 'justify-center']
+    : ['text-left', 'justify-start'];
+  return (
+    <th className={`px-4 py-2 ${textAlign}`} aria-sort={active ? (sortDir === 'asc' ? 'ascending' : 'descending') : 'none'}>
+      <span className={`inline-flex items-center gap-1 ${justify}`}>
+        <button type="button" onClick={() => onClick(k)}
+          className={`inline-flex items-center gap-1 uppercase hover:text-foreground ${active ? 'text-foreground' : ''}`}>
+          {label}<Icon className="h-3 w-3" />
+        </button>
+        {children}
+      </span>
+    </th>
+  );
 }
 
 function classify(roi: number, cost: number): VendorPerf['category'] {
@@ -90,6 +148,8 @@ function classify(roi: number, cost: number): VendorPerf['category'] {
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
 const fmtPct = (n: number) => `${(n * 100).toFixed(1)}%`;
+// Sales counts can be fractional when a shared sale is split between vendors.
+const fmtCount = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(1));
 
 // m:YYYY-MM (single month) | q:YYYY-Q# (quarter) | c:YYYY-MM:YYYY-MM (custom, inclusive)
 type Period = `m:${string}` | `q:${string}` | `c:${string}`;
@@ -143,6 +203,27 @@ function periodMonths(p: Period): number {
     return Math.max(1, (to.y - from.y) * 12 + (to.m - from.m) + 1);
   }
   return 1;
+}
+
+// YYYY-MM for every month the period covers, plus the last 12 months, newest
+// first -- the months offered in the Avg Gross dialog.
+function avgGrossMonths(p: Period): string[] {
+  const out = new Set<string>();
+  const { start, end } = periodRange(p);
+  if (start && end) {
+    const d = new Date(start);
+    const stop = new Date(end);
+    while (d < stop) {
+      out.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+      d.setUTCMonth(d.getUTCMonth() + 1);
+    }
+  }
+  const now = new Date();
+  for (let i = 0; i < 12; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
+    out.add(`${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`);
+  }
+  return [...out].sort().reverse();
 }
 
 function periodLabel(p: Period): string {
@@ -266,6 +347,9 @@ export default function AttributionPage() {
   const [vendorLeadsView, setVendorLeadsView] = useState<{ id: string | null; name: string } | null>(null);
   const [leads, setLeads] = useState<LeadRow[]>([]);
   const [manualLeadCounts, setManualLeadCounts] = useState<Record<string, ManualLeadCountBreakdown>>({});
+  // YYYY-MM -> avg gross per vehicle; only months someone has edited.
+  const [avgGrossByMonth, setAvgGrossByMonth] = useAvgGrossByMonth(activeOrgId);
+  const [avgGrossOpen, setAvgGrossOpen] = useState(false);
 
   const load = async () => {
     if (!activeOrgId) return;
@@ -422,33 +506,38 @@ export default function AttributionPage() {
   const perf: VendorPerf[] = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
 
-    const byVendor = new Map<string | null, { revenue: number; sales: number }>();
+    const byVendor = new Map<string | null, { revenue: number; grossRevenue: number; sales: number; credited: number; shared: number }>();
 
-    const credit = (vendorId: string | null, sale: SaleRow) => {
+    const credit = (vendorId: string | null, sale: SaleRow, share: number) => {
       const key = vendorId && knownVendorIds.has(vendorId) ? vendorId : null;
-      const cur = byVendor.get(key) ?? { revenue: 0, sales: 0 };
-      cur.revenue += saleRevenue(sale);
-      cur.sales += 1;
+      const cur = byVendor.get(key) ?? { revenue: 0, grossRevenue: 0, sales: 0, credited: 0, shared: 0 };
+      // Gross Revenue = Net Revenue + avg gross per vehicle x attributed sales,
+      // using the avg gross of the month each sale closed.
+      cur.revenue += saleRevenue(sale) * share;
+      cur.grossRevenue += (saleRevenue(sale) + avgGrossForSale(sale.sale_date, avgGrossByMonth)) * share;
+      cur.sales += share;
+      cur.credited += 1;
+      if (share < 1) cur.shared += 1;
       byVendor.set(key, cur);
     };
 
     // Credits come from sale_attributions, written by the one matcher that
-    // every import path shares. A sale credited to several vendors adds its
-    // full revenue to each -- intentional for vendor ROI auditing, and why
-    // the per-vendor revenue column can sum to more than total revenue.
+    // every import path shares. A sale credited to several vendors is SPLIT
+    // equally between them (vehicle, net and gross), so the vendor rows plus
+    // Unassigned add up exactly to the totals on the cards above.
     for (const s of sales) {
       const matches = (saleCredits.get(s.id) ?? []).filter(id => knownVendorIds.has(id));
 
       if (matches.length > 0) {
-        for (const vid of matches) credit(vid, s);
+        for (const vid of matches) credit(vid, s, 1 / matches.length);
         continue;
       }
 
-      credit(null, s);
+      credit(null, s, 1);
     }
 
     const rows: VendorPerf[] = vendors.map(v => {
-      const agg = byVendor.get(v.id) ?? { revenue: 0, sales: 0 };
+      const agg = byVendor.get(v.id) ?? { revenue: 0, grossRevenue: 0, sales: 0, credited: 0, shared: 0 };
       const leads = resolveLeadCount({
         vendorId: v.id,
         manualLeadCounts,
@@ -459,9 +548,12 @@ export default function AttributionPage() {
       const cpa = agg.sales > 0 ? cost / agg.sales : 0;
       const closeRate = leads > 0 ? agg.sales / leads : 0;
       const roi = cost > 0 ? (agg.revenue - cost) / cost : 0;
+      const grossRoi = cost > 0 ? (agg.grossRevenue - cost) / cost : 0;
       return {
         vendor: v, vendorName: v.name, leads, sales: agg.sales, revenue: agg.revenue,
-        cost, cpl, cpa, closeRate, roi, category: classify(roi, cost),
+        grossRevenue: agg.grossRevenue,
+        salesCredited: agg.credited, salesShared: agg.shared,
+        cost, cpl, cpa, closeRate, roi, grossRoi, category: classify(grossRoi, cost),
       };
     });
 
@@ -472,51 +564,77 @@ export default function AttributionPage() {
         leads: unattributedLeads,
         sales: unassignedAgg?.sales ?? 0,
         revenue: unassignedAgg?.revenue ?? 0,
+        grossRevenue: unassignedAgg?.grossRevenue ?? 0,
+        salesCredited: unassignedAgg?.credited ?? 0, salesShared: 0,
         cost: 0, cpl: 0, cpa: 0,
         closeRate: unattributedLeads > 0 ? (unassignedAgg?.sales ?? 0) / unattributedLeads : 0,
-        roi: 0, category: 'NONE',
+        roi: 0, grossRoi: 0, category: 'NONE',
       });
     }
-    return rows.sort((a, b) => b.revenue - a.revenue);
-  }, [vendors, sales, saleCredits, leadCounts, unattributedLeads, months, manualLeadCounts]);
+    return rows.sort((a, b) => b.grossRevenue - a.grossRevenue);
+  }, [vendors, sales, saleCredits, leadCounts, unattributedLeads, months, manualLeadCounts, avgGrossByMonth]);
 
+  // Revenue here is GROSS (sale price + avg gross per vehicle for the month
+  // it sold); net is kept alongside for the card's secondary line.
   const totals = useMemo(() => {
-    const revenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
+    const knownVendorIds = new Set(vendors.map(v => v.id));
+    const grossOf = (s: SaleRow) => saleRevenue(s) + avgGrossForSale(s.sale_date, avgGrossByMonth);
+    const netRevenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
+    const revenue = sales.reduce((a, s) => a + grossOf(s), 0);
+    // Overall ROI compares vendor cost with the gross of vendor-ATTRIBUTED
+    // sales only -- Unassigned sales earned nothing for any vendor.
+    const attributedGross = sales
+      .filter(s => (saleCredits.get(s.id) ?? []).some(id => knownVendorIds.has(id)))
+      .reduce((a, s) => a + grossOf(s), 0);
     const salesCount = sales.length;
     const cost = perf.reduce((a, r) => a + r.cost, 0);
     const leads = perf.reduce((a, r) => a + r.leads, 0);
     return {
       revenue,
+      netRevenue,
       sales: salesCount,
       cost,
       leads,
-      roi: cost > 0 ? (revenue - cost) / cost : 0,
+      attributedGross,
+      roi: cost > 0 ? (attributedGross - cost) / cost : 0,
     };
-  }, [sales, perf]);
+  }, [sales, perf, vendors, saleCredits, avgGrossByMonth]);
 
-  const trend = useMemo(() => {
-    const buckets: Record<string, number> = {};
-    const now = new Date();
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      buckets[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] = 0;
-    }
-    for (const s of trendSales) {
-      if (!s.sale_date) continue;
-      const d = new Date(s.sale_date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += saleRevenue(s);
-    }
-    return Object.entries(buckets).map(([month, revenue]) => ({
-      month: month.slice(5) + '/' + month.slice(2, 4),
-      revenue,
-    }));
-  }, [trendSales]);
+  const roasRoiTrend = useMemo(() => buildRoasRoiTrend({
+    sales: trendSalesFull,
+    vendors,
+    creditsBySaleId: saleCredits,
+    avgGrossByMonth,
+  }), [trendSalesFull, vendors, saleCredits, avgGrossByMonth]);
+
+  // Table and export follow the user's column sort (default: sales, high to
+  // low; revenue breaks ties). `perf` itself stays revenue-ordered because
+  // the ROI chart takes its top 10.
+  const [perfSortKey, setPerfSortKey] = useState<PerfSortKey>('sales');
+  const [perfSortDir, setPerfSortDir] = useState<'asc' | 'desc'>('desc');
+  const togglePerfSort = (k: PerfSortKey) => {
+    if (perfSortKey === k) setPerfSortDir(d => (d === 'asc' ? 'desc' : 'asc'));
+    // Names start A→Z; numbers start high→low, the more useful first view.
+    else { setPerfSortKey(k); setPerfSortDir(k === 'vendorName' ? 'asc' : 'desc'); }
+  };
+  const perfSorted = useMemo(() => {
+    const dir = perfSortDir === 'asc' ? 1 : -1;
+    return [...perf].sort((a, b) => {
+      const av = perfSortValue(a, perfSortKey);
+      const bv = perfSortValue(b, perfSortKey);
+      if (av !== bv) {
+        if (av === null) return 1;
+        if (bv === null) return -1;
+        return (av < bv ? -1 : 1) * dir;
+      }
+      return b.grossRevenue - a.grossRevenue || a.vendorName.localeCompare(b.vendorName);
+    });
+  }, [perf, perfSortKey, perfSortDir]);
 
   const roiChart = useMemo(() =>
     perf.filter(p => p.cost > 0).slice(0, 10).map(p => ({
       name: p.vendorName.length > 14 ? p.vendorName.slice(0, 14) + '…' : p.vendorName,
-      roi: Math.round(p.roi * 100),
+      roi: Math.round(p.grossRoi * 100),
       category: p.category,
     })), [perf]);
 
@@ -527,7 +645,8 @@ export default function AttributionPage() {
     vendors,
     creditsBySaleId: saleCredits,
     months: 12,
-  }), [trendSalesFull, vendors, saleCredits]);
+    avgGrossByMonth,
+  }), [trendSalesFull, vendors, saleCredits, avgGrossByMonth]);
 
   // Trend points are { month, 'vendor:<id>': number, ... } — pull every
   // numeric series value out so the axis covers all vendor lines at once.
@@ -543,7 +662,7 @@ export default function AttributionPage() {
   }, [roiTrend]);
 
   const exportVendorRoi = () => {
-    const rows = perf.map(p => ({
+    const rows = perfSorted.map(p => ({
       vendor: p.vendorName,
       leads: p.leads,
       sales: p.sales,
@@ -551,8 +670,10 @@ export default function AttributionPage() {
       cost: p.cost.toFixed(2),
       cpl: p.cpl.toFixed(2),
       cpa: p.cpa.toFixed(2),
-      revenue: p.revenue.toFixed(2),
-      roi_pct: p.cost > 0 ? (p.roi * 100).toFixed(2) : '',
+      net_revenue: p.revenue.toFixed(2),
+      gross_revenue: p.grossRevenue.toFixed(2),
+      roas_pct: p.cost > 0 ? (p.roi * 100).toFixed(2) : '',
+      roi_pct: p.cost > 0 ? (p.grossRoi * 100).toFixed(2) : '',
       category: p.category,
     }));
     downloadCsv(`vendor-roi-${period.replace(/:/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
@@ -585,8 +706,13 @@ export default function AttributionPage() {
   };
 
   const isCustom = period.startsWith('c:');
+  const avgGrossMonthList = useMemo(() => avgGrossMonths(period), [period]);
 
-  const matchedSales = sales.filter(s => !!s.lead_id || !!s.vendor_id).length;
+  // Same source as the vendor table: a sale counts as matched when
+  // sale_attributions credits it to at least one current vendor (the old
+  // lead_id/vendor_id columns are frozen legacy data and disagree with it).
+  const knownVendorIdSet = new Set(vendors.map(v => v.id));
+  const matchedSales = sales.filter(s => (saleCredits.get(s.id) ?? []).some(id => knownVendorIdSet.has(id))).length;
   const matchRate = sales.length > 0 ? matchedSales / sales.length : 0;
 
   if (!activeOrgId) return <p className="text-sm text-muted-foreground">Select a dealership first.</p>;
@@ -648,6 +774,9 @@ export default function AttributionPage() {
             </Button>
           </div>
 
+          <Button variant="outline" onClick={() => setAvgGrossOpen(true)}>
+            <Calculator className="mr-1 h-4 w-4" /> Avg Gross
+          </Button>
           <Button variant="outline" onClick={exportVendorRoi}>
             <Download className="mr-1 h-4 w-4" /> Vendor ROI
           </Button>
@@ -663,7 +792,13 @@ export default function AttributionPage() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard accent="amber" icon={DollarSign} label="Revenue" value={fmtMoney(totals.revenue)} />
+        <StatCard
+          accent="amber"
+          icon={DollarSign}
+          label="Gross Revenue"
+          value={fmtMoney(totals.revenue)}
+          secondary={{ label: 'Net', value: fmtMoney(totals.netRevenue) }}
+        />
         <StatCard
           accent="orange"
           icon={ShoppingCart}
@@ -688,19 +823,11 @@ export default function AttributionPage() {
       </div>
 
       <div className="grid gap-4 lg:grid-cols-2">
-        <ExpandableChartCard title="Revenue — last 12 months">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={trend} margin={{ top: 8, right: 12, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
-              <Tooltip
-                formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
-                contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-              />
-              <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
+        <ExpandableChartCard
+          title="ROAS & ROI — last 12 months"
+          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses net revenue; ROI uses gross revenue (net + avg gross × sales). Months with no attributed sales are left blank."
+        >
+          <RoasRoiTrendChart data={roasRoiTrend} />
         </ExpandableChartCard>
 
         <ExpandableChartCard title="Vendor ROI (selected window)">
@@ -783,34 +910,33 @@ export default function AttributionPage() {
             <table className="w-full text-sm">
               <thead className="border-b bg-muted/40 text-xs uppercase text-muted-foreground">
                 <tr>
-                  <th className="px-4 py-2 text-left">Vendor</th>
-                  <th className="px-4 py-2 text-right">Leads</th>
-                  <th className="px-4 py-2 text-right">Sales</th>
-                  <th className="px-4 py-2 text-right">
-                    <TooltipProvider>
-                      <UITooltip>
-                        <TooltipTrigger asChild>
-                          <span className="inline-flex items-center justify-end gap-1 cursor-default">
-                            Close %
-                            <Info className="h-3 w-3 text-muted-foreground" />
-                          </span>
-                        </TooltipTrigger>
-                        <TooltipContent side="top" className="max-w-xs text-xs">
-                          Sales are counted by <strong>sale date</strong>; leads are counted by <strong>lead date</strong>. A vendor can show more sales than leads when customers submitted their lead in a prior period but closed this month.
-                        </TooltipContent>
-                      </UITooltip>
-                    </TooltipProvider>
-                  </th>
-                  <th className="px-4 py-2 text-right">Cost</th>
-                  <th className="px-4 py-2 text-right">CPL</th>
-                  <th className="px-4 py-2 text-right">CPA</th>
-                  <th className="px-4 py-2 text-right">Revenue</th>
-                  <th className="px-4 py-2 text-right">ROI</th>
-                  <th className="px-4 py-2 text-center">Action</th>
+                  <PerfSortHeader label="Vendor" k="vendorName" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} align="left" />
+                  <PerfSortHeader label="Leads" k="leads" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Sales" k="sales" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Close %" k="closeRate" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort}>
+                      <TooltipProvider>
+                        <UITooltip>
+                          <TooltipTrigger asChild>
+                            <Info className="h-3 w-3 cursor-default text-muted-foreground" />
+                          </TooltipTrigger>
+                          <TooltipContent side="top" className="max-w-xs text-xs normal-case">
+                            Sales are counted by <strong>sale date</strong>; leads are counted by <strong>lead date</strong>. A vendor can show more sales than leads when customers submitted their lead in a prior period but closed this month.
+                          </TooltipContent>
+                        </UITooltip>
+                      </TooltipProvider>
+                  </PerfSortHeader>
+                  <PerfSortHeader label="Cost" k="cost" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="CPL" k="cpl" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="CPA" k="cpa" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Net Revenue" k="revenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Gross Revenue" k="grossRevenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="ROAS" k="roi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="ROI" k="grossRoi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Action" k="category" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} align="center" />
                 </tr>
               </thead>
               <tbody>
-                {perf.map(r => (
+                {perfSorted.map(r => (
                   <tr key={r.vendor?.id ?? 'unassigned'} className="border-b hover:bg-muted/30">
                     <td className="px-4 py-2 font-medium">{r.vendorName}</td>
                     <td className="px-4 py-2 text-right">
@@ -823,11 +949,18 @@ export default function AttributionPage() {
                     </td>
                     <td className="px-4 py-2 text-right">
                       {r.sales > 0 ? (
-                        <button type="button" className="font-medium text-primary underline-offset-2 hover:underline"
-                          onClick={() => setVendorSalesView({ id: r.vendor?.id ?? null, name: r.vendorName })}>
-                          {r.sales}
-                        </button>
-                      ) : r.sales}
+                        <TooltipProvider delayDuration={150}>
+                          <UITooltip>
+                            <TooltipTrigger asChild>
+                              <button type="button" className="font-medium text-primary underline-offset-2 hover:underline"
+                                onClick={() => setVendorSalesView({ id: r.vendor?.id ?? null, name: r.vendorName })}>
+                                {fmtCount(r.sales)}
+                              </button>
+                            </TooltipTrigger>
+                            <SalesSummaryTip row={r} />
+                          </UITooltip>
+                        </TooltipProvider>
+                      ) : fmtCount(r.sales)}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {r.closeRate > 1 ? (
@@ -852,7 +985,9 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 text-right">{r.cpl > 0 ? fmtMoney(r.cpl) : '—'}</td>
                     <td className="px-4 py-2 text-right">{r.cpa > 0 ? fmtMoney(r.cpa) : '—'}</td>
                     <td className="px-4 py-2 text-right">{fmtMoney(r.revenue)}</td>
+                    <td className="px-4 py-2 text-right">{fmtMoney(r.grossRevenue)}</td>
                     <td className="px-4 py-2 text-right">{r.cost > 0 ? `${(r.roi * 100).toFixed(0)}%` : '—'}</td>
+                    <td className="px-4 py-2 text-right">{r.cost > 0 ? `${(r.grossRoi * 100).toFixed(0)}%` : '—'}</td>
                     <td className="px-4 py-2 text-center"><CategoryBadge cat={r.category} /></td>
                   </tr>
                 ))}
@@ -874,7 +1009,16 @@ export default function AttributionPage() {
               if (vendorSalesView.id === null) return credited.length === 0;
               return credited.includes(vendorSalesView.id);
             }).sort((a, b) => (a.customer_full_name ?? '').localeCompare(b.customer_full_name ?? ''));
-            const rev = list.reduce((a, s) => a + saleRevenue(s), 0);
+            // This vendor's share, matching its table row: a sale shared by N
+            // vendors contributes 1/N here.
+            const shareOf = (s: SaleRow) => {
+              if (vendorSalesView.id === null) return 1;
+              const n = (saleCredits.get(s.id) ?? []).filter(id => knownVendorIds.has(id)).length;
+              return n > 0 ? 1 / n : 1;
+            };
+            const sharedCount = list.filter(s => shareOf(s) < 1).length;
+            const rev = list.reduce((a, s) => a + saleRevenue(s) * shareOf(s), 0);
+            const grossRev = list.reduce((a, s) => a + (saleRevenue(s) + avgGrossForSale(s.sale_date, avgGrossByMonth)) * shareOf(s), 0);
 
             // Lead date the sale matched against — prefer the sale's own lead_id
             // (set whenever Match Leads or a manual link ran, regardless of VIN/
@@ -905,7 +1049,8 @@ export default function AttributionPage() {
               <>
                 <DialogHeader>
                   <DialogTitle>Sales attributed to {vendorSalesView.name}</DialogTitle>
-                  <DialogDescription>{list.length} sale(s) · {fmtMoney(rev)} total</DialogDescription>
+                  <DialogDescription>{list.length} sale(s) · {fmtMoney(grossRev)} gross · {fmtMoney(rev)} net
+                    {sharedCount > 0 && ` · ${sharedCount} shared with other vendors (split equally)`}</DialogDescription>
                 </DialogHeader>
                 <div className="max-h-[60vh] overflow-auto">
                   <table className="w-full text-sm">
@@ -996,6 +1141,15 @@ export default function AttributionPage() {
           })() : null}
         </DialogContent>
       </Dialog>
+
+      <AvgGrossDialog
+        open={avgGrossOpen}
+        onOpenChange={setAvgGrossOpen}
+        organizationId={activeOrgId}
+        months={avgGrossMonthList}
+        values={avgGrossByMonth}
+        onSaved={setAvgGrossByMonth}
+      />
     </div>
   );
 }
@@ -1012,4 +1166,33 @@ export function AttributionBadge({ status, confidence, manual }: { status: strin
   if (status === 'auto') return <Badge className="bg-blue-600 hover:bg-blue-700">Auto · {confidence}%</Badge>;
   if (status === 'none') return <Badge variant="outline">No match</Badge>;
   return <Badge variant="secondary">Pending</Badge>;
+}
+
+// Hover card on a vendor's Sales number: the same summary as the sales popup,
+// coloured so the split explanation gets read. Money is the vendor's share.
+function SalesSummaryTip({ row }: { row: VendorPerf }) {
+  const unassigned = row.vendor === null;
+  return (
+    <TooltipContent side="top" className="w-72 border-primary/30 p-3 text-left text-xs">
+      <p className="mb-2 text-sm font-semibold text-foreground">
+        {row.salesCredited} sale{row.salesCredited === 1 ? '' : 's'}{' '}
+        {unassigned ? 'with no vendor credit' : `credited to ${row.vendorName}`}
+      </p>
+      <div className="space-y-1">
+        <div className="flex items-center justify-between rounded bg-emerald-100 px-2 py-1 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
+          <span>Gross</span><span className="font-semibold">{fmtMoney(row.grossRevenue)}</span>
+        </div>
+        <div className="flex items-center justify-between rounded bg-sky-100 px-2 py-1 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">
+          <span>Net</span><span className="font-semibold">{fmtMoney(row.revenue)}</span>
+        </div>
+        {row.salesShared > 0 && (
+          <div className="rounded bg-amber-100 px-2 py-1 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+            <span className="font-semibold">{row.salesShared} shared with other vendors</span>, split equally, so
+            this vendor counts {fmtCount(row.sales)} of its {row.salesCredited} sales.
+          </div>
+        )}
+      </div>
+      <p className="mt-2 text-muted-foreground">Click to see the sales.</p>
+    </TooltipContent>
+  );
 }

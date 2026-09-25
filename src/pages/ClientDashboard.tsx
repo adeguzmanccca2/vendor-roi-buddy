@@ -3,6 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { supabase } from '@/integrations/supabase/client';
+import type { SupabaseClient } from '@supabase/supabase-js';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { ExpandableChartCard } from '@/components/ExpandableChartCard';
 import { StatCard } from '@/components/StatCard';
@@ -13,12 +14,16 @@ import {
   ResponsiveContainer, LineChart, Line, XAxis, YAxis, Tooltip, CartesianGrid,
 } from 'recharts';
 import { downloadCsv } from '@/lib/exportCsv';
-import { buildVendorComparisonData, type VendorComparisonSeries } from '@/lib/dashboardCharts';
+import { buildRevenueTrend, buildRoasRoiTrend, buildVendorComparisonData, type VendorComparisonSeries } from '@/lib/dashboardCharts';
+import { RoasRoiTrendChart } from '@/components/RoasRoiTrendChart';
+import { RevenueTrendChart } from '@/components/RevenueTrendChart';
+import { useAvgGrossByMonth } from '@/hooks/useAvgGrossByMonth';
+import { avgGrossForSale } from '@/lib/avgGross';
 import { formatCompactMoney } from '@/lib/utils';
 import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Org { id: string; name: string; slug: string; status: string }
-interface SaleLite { sale_date: string | null; sale_price: number | null; vendor_id: string | null; lead_id: string | null }
+interface SaleLite { id: string; sale_date: string | null; sale_price: number | null; vendor_id: string | null; lead_id: string | null }
 interface LeadLite { lead_date: string | null; vendor_id: string | null }
 interface VendorLite { id: string; name: string; monthly_cost: number | null }
 interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null }
@@ -35,7 +40,12 @@ export default function ClientDashboard() {
   const { activeOrgId, activeOrg: activeOrgMeta } = useActiveOrg();
   const [org, setOrg] = useState<Org | null>(null);
   const [loading, setLoading] = useState(true);
-  const [stats, setStats] = useState({ leads: 0, sales: 0, revenue: 0 });
+  const [stats, setStats] = useState({ leads: 0, sales: 0 });
+  // YTD sales, kept so gross revenue can be recomputed when the monthly avg
+  // gross values finish loading (they come from a separate query).
+  const [ytdSales, setYtdSales] = useState<{ id: string; sale_date: string | null; sale_price: number | null }[]>([]);
+  // sale_id -> credited vendor ids (sale_attributions), for attributed-only ROI.
+  const [saleCredits, setSaleCredits] = useState<Map<string, string[]>>(new Map());
   const [vendorCosts, setVendorCosts] = useState<VendorCost[]>([]);
   const [trendSales, setTrendSales] = useState<SaleLite[]>([]);
   const [trendLeads, setTrendLeads] = useState<LeadLite[]>([]);
@@ -47,6 +57,7 @@ export default function ClientDashboard() {
   // When the user picks a different year, the useEffect re-fires and
   // re-fetches all stats for that year's Jan 1 → Dec 31 window.
   const [selectedYear, setSelectedYear] = useState<number>(currentYear);
+  const [avgGrossByMonth] = useAvgGrossByMonth(activeOrgId);
 
   useEffect(() => {
     if (!activeOrgId) {
@@ -76,7 +87,9 @@ export default function ClientDashboard() {
     // WHY: Reset all stats immediately when org or year changes so stale
     // numbers from the previous selection never show while the new fetch
     // is in flight.
-    setStats({ leads: 0, sales: 0, revenue: 0 });
+    setStats({ leads: 0, sales: 0 });
+    setYtdSales([]);
+    setSaleCredits(new Map());
     setVendorCosts([]);
     setTrendSales([]);
     setExportRows([]);
@@ -91,9 +104,6 @@ export default function ClientDashboard() {
     const ytdStart = new Date(Date.UTC(selectedYear, 0, 1)).toISOString();        // Jan 1 UTC
     const ytdEnd   = new Date(Date.UTC(selectedYear, 11, 31, 23, 59, 59, 999)).toISOString(); // Dec 31 UTC
 
-    // Trend: always show last 12 months from today regardless of selected year
-    const now = new Date();
-    const trendStart = new Date(now.getFullYear(), now.getMonth() - 11, 1).toISOString();
 
     Promise.all([
       supabase.from('organizations').select('id, name, slug, status').eq('id', orgId).maybeSingle(),
@@ -103,7 +113,7 @@ export default function ClientDashboard() {
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd),
       // Sales YTD
-      supabase.from('sales').select('sale_price')
+      supabase.from('sales').select('id, sale_date, sale_price')
         .eq('organization_id', orgId)
         .gte('sale_date', ytdStart)
         .lte('sale_date', ytdEnd),
@@ -114,25 +124,28 @@ export default function ClientDashboard() {
         .eq('organization_id', orgId)
         .not('vendor_id', 'is', null)
         .order('lead_date', { ascending: true }),
-      // Revenue trend (last 12 months, always current)
-      supabase.from('sales').select('sale_date, sale_price, vendor_id, lead_id')
+      // Monthly trend for the charts: the selected year
+      supabase.from('sales').select('id, sale_date, sale_price, vendor_id, lead_id')
         .eq('organization_id', orgId)
-        .gte('sale_date', trendStart),
-      // Lead counts for comparison (last 12 months)
+        .gte('sale_date', ytdStart)
+        .lte('sale_date', ytdEnd),
+      // Lead counts for comparison (selected year)
       supabase.from('leads').select('lead_date, vendor_id')
         .eq('organization_id', orgId)
-        .gte('lead_date', trendStart),
+        .gte('lead_date', ytdStart)
+        .lte('lead_date', ytdEnd),
       // Leads export (YTD for selected year)
       supabase.from('leads').select('customer_full_name, customer_email, customer_phone, vehicle_of_interest, lead_date, lead_status, vendor_id')
         .eq('organization_id', orgId)
         .gte('lead_date', ytdStart)
         .lte('lead_date', ytdEnd)
         .limit(5000),
-    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes]) => {
+      // Vendor credits, for ROI on attributed sales only
+      // Untyped client: sale_attributions is missing from the stale types.ts.
+      (supabase as unknown as SupabaseClient).from('sale_attributions').select('sale_id, vendor_id')
+        .eq('organization_id', orgId),
+    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes, creditsRes]) => {
       setOrg(orgRes.data ?? null);
-      const revenue = (salesRes.data ?? []).reduce(
-        (a, s) => a + Number(s.sale_price ?? 0), 0,
-      );
 
       // Build a map of vendor_id → earliest lead_date
       const firstLeadByVendor: Record<string, string> = {};
@@ -162,7 +175,15 @@ export default function ClientDashboard() {
       });
 
       setVendorCosts(costs);
-      setStats({ leads: leadCount, sales: salesRes.data?.length ?? 0, revenue });
+      setStats({ leads: leadCount, sales: salesRes.data?.length ?? 0 });
+      setYtdSales((salesRes.data ?? []) as { id: string; sale_date: string | null; sale_price: number | null }[]);
+      const credits = new Map<string, string[]>();
+      for (const r of (creditsRes.data ?? []) as unknown as { sale_id: string; vendor_id: string }[]) {
+        const list = credits.get(r.sale_id) ?? [];
+        list.push(r.vendor_id);
+        credits.set(r.sale_id, list);
+      }
+      setSaleCredits(credits);
       setTrendSales((trendSalesRes.data ?? []) as SaleLite[]);
       setTrendLeads((trendLeadsRes.data ?? []) as LeadLite[]);
       setVendors((vendorsRes.data ?? []) as VendorLite[]);
@@ -170,6 +191,22 @@ export default function ClientDashboard() {
       setLoading(false);
     });
   }, [activeOrgId, manualLeadCounts, selectedYear]);
+
+  // Revenue on the dashboard is GROSS: sale price + avg gross per vehicle for
+  // the month each sale closed (set on the Attribution page, default $4,000).
+  const netRevenue = useMemo(() => ytdSales.reduce((a, s) => a + Number(s.sale_price ?? 0), 0), [ytdSales]);
+  const grossRevenue = useMemo(
+    () => ytdSales.reduce((a, s) => a + Number(s.sale_price ?? 0) + avgGrossForSale(s.sale_date, avgGrossByMonth), 0),
+    [ytdSales, avgGrossByMonth],
+  );
+  // ROI (YTD) uses only sales credited to one of these vendors -- Unassigned
+  // sales earned nothing for any vendor. Same rule as the Attribution page.
+  const attributedGross = useMemo(() => {
+    const vendorIds = new Set(vendors.map(v => v.id));
+    return ytdSales
+      .filter(s => (saleCredits.get(s.id) ?? []).some(id => vendorIds.has(id)))
+      .reduce((a, s) => a + Number(s.sale_price ?? 0) + avgGrossForSale(s.sale_date, avgGrossByMonth), 0);
+  }, [ytdSales, saleCredits, vendors, avgGrossByMonth]);
 
   // WHY: Cost is calculated per vendor based on when they first sent a lead.
   // months_active = months from first lead date to end of selected period.
@@ -210,31 +247,36 @@ export default function ClientDashboard() {
     }, 0);
   }, [vendorCosts, selectedYear]);
 
-  const trend = useMemo(() => {
-    const buckets: Record<string, number> = {};
-    const now = new Date();
-    for (let i = 11; i >= 0; i--) {
-      const d = new Date(now.getFullYear(), now.getMonth() - i, 1);
-      buckets[`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`] = 0;
-    }
-    for (const s of trendSales) {
-      if (!s.sale_date) continue;
-      const d = new Date(s.sale_date);
-      const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-      if (key in buckets) buckets[key] += Number(s.sale_price ?? 0);
-    }
-    return Object.entries(buckets).map(([month, revenue]) => ({
-      month: month.slice(5) + '/' + month.slice(2, 4),
-      revenue,
-    }));
-  }, [trendSales]);
+  // Charts follow the year picker: Jan-Dec for a past year, Jan through this
+  // month for the current year (no empty future months).
+  const chartMonths = selectedYear < currentYear ? 12 : new Date().getMonth() + 1;
+  // Mid-month of the window's last month, as a number so hooks can depend on it.
+  const chartEndMs = Date.UTC(selectedYear, chartMonths - 1, 15);
+  const chartLabel = selectedYear < currentYear ? String(selectedYear) : `${selectedYear} to date`;
+
+  const revenueTrend = useMemo(() => buildRevenueTrend({
+    sales: trendSales,
+    avgGrossByMonth,
+    months: chartMonths,
+    now: new Date(chartEndMs),
+  }), [trendSales, avgGrossByMonth, chartMonths, chartEndMs]);
+
+  const roasRoiTrend = useMemo(() => buildRoasRoiTrend({
+    sales: trendSales,
+    vendors,
+    creditsBySaleId: saleCredits,
+    avgGrossByMonth,
+    months: chartMonths,
+    now: new Date(chartEndMs),
+  }), [trendSales, vendors, saleCredits, avgGrossByMonth, chartMonths, chartEndMs]);
 
   const comparison = useMemo(() => buildVendorComparisonData({
     leads: trendLeads,
     sales: trendSales,
     vendors,
-    months: 12,
-  }), [trendLeads, trendSales, vendors]);
+    months: chartMonths,
+    now: new Date(chartEndMs),
+  }), [trendLeads, trendSales, vendors, chartMonths, chartEndMs]);
 
   const exportLeads = () =>
     downloadCsv(`leads-ytd-${selectedYear}-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
@@ -260,7 +302,7 @@ export default function ClientDashboard() {
     );
   }
 
-  const roi = ytdCost > 0 ? (stats.revenue - ytdCost) / ytdCost : 0;
+  const roi = ytdCost > 0 ? (attributedGross - ytdCost) / ytdCost : 0;
   const isCurrentYear = selectedYear === currentYear;
   const periodLabel = isCurrentYear ? 'Year-to-date' : `Full year ${selectedYear}`;
 
@@ -269,7 +311,7 @@ export default function ClientDashboard() {
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
           <h1 className="text-2xl font-bold text-foreground">{activeOrgMeta?.name ?? org?.name ?? 'Dashboard'}</h1>
-          <p className="text-sm text-muted-foreground">{periodLabel} · trend over last 12 months</p>
+          <p className="text-sm text-muted-foreground">{periodLabel} · cards and charts show {chartLabel}</p>
         </div>
         <div className="flex items-center gap-2">
           {/* WHY: Year picker placed before action buttons so it's clearly a
@@ -296,7 +338,8 @@ export default function ClientDashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard accent="amber" icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
         <StatCard accent="orange" icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
-        <StatCard accent="ember" icon={DollarSign} label={`Revenue (YTD)`} value={fmtMoney(stats.revenue)} />
+        <StatCard accent="ember" icon={DollarSign} label={`Gross Revenue (YTD)`} value={fmtMoney(grossRevenue)}
+          secondary={{ label: 'Net', value: fmtMoney(netRevenue) }} />
         <StatCard
           accent="rose"
           icon={TrendingUp}
@@ -309,23 +352,22 @@ export default function ClientDashboard() {
       {/* Two per row on wide screens, stacked on narrow. Adding another chart
           is just another ExpandableChartCard in this grid — no layout change. */}
       <div className="grid gap-4 lg:grid-cols-2">
-        <ExpandableChartCard title="Revenue trend — last 12 months">
-          <ResponsiveContainer width="100%" height="100%">
-            <LineChart data={trend} margin={{ top: 8, right: 16, left: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-              <XAxis dataKey="month" tick={{ fontSize: 11 }} />
-              <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} />
-              <Tooltip
-                formatter={(v: any) => [fmtMoney(Number(v)), 'Revenue']}
-                contentStyle={{ fontSize: 12, background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-              />
-              <Line type="monotone" dataKey="revenue" stroke="hsl(var(--primary))" strokeWidth={2} dot={{ r: 3 }} />
-            </LineChart>
-          </ResponsiveContainer>
+        <ExpandableChartCard
+          title={`Revenue by month — ${chartLabel}`}
+          description="All sales. Each bar is gross revenue: net sale prices plus the month's avg gross × vehicles sold. Hover a month for the breakdown."
+        >
+          <RevenueTrendChart data={revenueTrend} />
         </ExpandableChartCard>
 
         <ExpandableChartCard
-          title="Vendor attribution — last 12 months"
+          title={`ROAS & ROI — ${chartLabel}`}
+          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses net revenue; ROI uses gross revenue (net + avg gross × sales). Months with no attributed sales are left blank."
+        >
+          <RoasRoiTrendChart data={roasRoiTrend} />
+        </ExpandableChartCard>
+
+        <ExpandableChartCard
+          title={`Vendor attribution — ${chartLabel}`}
           description="Total attributed sales and total leads, plus a leads breakdown by vendor."
           footer={<VendorAttributionLegend series={comparison.series} />}
         >

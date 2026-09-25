@@ -64,7 +64,7 @@ describe('buildVendorRoiTrend', () => {
     ]);
   });
 
-  it('gives each credited vendor full revenue when a sale is credited to several', () => {
+  it('splits a sale equally between vendors when it is credited to several', () => {
     const now = new Date();
     const thisMonthDate = new Date(now.getFullYear(), now.getMonth(), 5);
     const thisMonth = `${String(thisMonthDate.getMonth() + 1).padStart(2, '0')}/${String(thisMonthDate.getFullYear()).slice(2)}`;
@@ -77,14 +77,13 @@ describe('buildVendorRoiTrend', () => {
         { id: 'v1', name: 'Acme', monthly_cost: 1000 },
         { id: 'v2', name: 'Beta', monthly_cost: 1000 },
       ],
-      // The multi-vendor model: both vendors legitimately claim this sale, so
-      // both get the full 2000 rather than 1000 each.
+      // Shared credit is split: each vendor gets 1000 of the 2000 sale.
       creditsBySaleId: new Map([['sale-1', ['v1', 'v2']]]),
       months: 1,
     });
 
     expect(trend.data).toEqual([
-      { month: thisMonth, 'vendor:v1': 100, 'vendor:v2': 100 },
+      { month: thisMonth, 'vendor:v1': 0, 'vendor:v2': 0 },
     ]);
   });
 
