@@ -4,6 +4,7 @@
 -- one dealership could only ever see import logs for the org on their
 -- profile row, never the others they're a member of via user_organizations.
 DROP POLICY IF EXISTS "Clients view own org dms import logs" ON public.dms_import_logs;
+DROP POLICY IF EXISTS "Members view their orgs dms import logs" ON public.dms_import_logs;
 
 CREATE POLICY "Members view their orgs dms import logs"
   ON public.dms_import_logs FOR SELECT TO authenticated

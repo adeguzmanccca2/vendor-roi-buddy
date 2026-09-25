@@ -72,6 +72,7 @@ $$;
 -- RLS: a member of several dealerships must be able to read the credits for
 -- each of them, not just the one on their profile row.
 DROP POLICY IF EXISTS "Clients view own org sale attributions" ON public.sale_attributions;
+DROP POLICY IF EXISTS "Members view their orgs sale attributions" ON public.sale_attributions;
 
 CREATE POLICY "Members view their orgs sale attributions" ON public.sale_attributions
   FOR SELECT TO authenticated

@@ -21,6 +21,25 @@ import { createClient } from '@supabase/supabase-js';
 
 const CODE_TTL_NOTE = 'This code expires shortly and can only be used once.';
 
+// Two buckets, because they stop different things. The per-email bucket is the
+// brute-force limit: it caps guesses against one account no matter how many
+// addresses the attacker comes from. The per-IP bucket is the abuse limit: it
+// stops one source spraying many addresses, which the email bucket alone would
+// never notice. IP is the looser of the two so a dealership behind one office
+// NAT does not lock itself out.
+const EMAIL_MAX_ATTEMPTS = 8;
+const IP_MAX_ATTEMPTS = 30;
+const RATE_WINDOW_SECONDS = 15 * 60;
+
+// x-forwarded-for is a client-supplied header everywhere except behind a proxy
+// that overwrites it. Vercel does overwrite it, and the real client is the
+// FIRST entry; later entries are attacker-controllable and must not be trusted.
+function clientIp(req: VercelRequest): string {
+  const fwd = req.headers['x-forwarded-for'];
+  const raw = Array.isArray(fwd) ? fwd[0] : fwd;
+  return raw?.split(',')[0]?.trim() || 'unknown';
+}
+
 async function sendBrevoEmail(params: {
   apiKey: string;
   to: string;
@@ -92,7 +111,44 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ error: 'Email and password are required' });
   }
 
+  const admin = createClient(supabaseUrl, serviceRoleKey);
+
+  // Consumes an attempt whether or not the password turns out to be right, so
+  // guessing is what gets rate limited -- checking only failures would let an
+  // attacker probe freely until the moment they succeed.
+  //
+  // Fails OPEN: if the counter itself errors (most likely the migration not
+  // being applied yet) sign-in keeps working and the problem is logged, rather
+  // than every user being locked out by an infrastructure fault. The error is
+  // loud precisely because this is the state where there is no protection.
+  const underLimit = async (key: string, max: number): Promise<boolean> => {
+    const { data, error } = await admin.rpc('check_auth_rate_limit', {
+      _key: key,
+      _max_attempts: max,
+      _window_seconds: RATE_WINDOW_SECONDS,
+    });
+    if (error) {
+      console.error('[auth/login-request] rate limit check failed open:', error.message);
+      return true;
+    }
+    return data !== false;
+  };
+
   try {
+    const ip = clientIp(req);
+    const [ipOk, emailOk] = await Promise.all([
+      underLimit(`login:ip:${ip}`, IP_MAX_ATTEMPTS),
+      underLimit(`login:email:${email}`, EMAIL_MAX_ATTEMPTS),
+    ]);
+
+    if (!ipOk || !emailOk) {
+      // Identical message either way: saying which bucket tripped would reveal
+      // whether this specific address is being targeted.
+      return res.status(429).json({
+        error: 'Too many sign-in attempts. Please wait a few minutes and try again.',
+      });
+    }
+
     // 1. Verify the password. The session this returns is deliberately thrown
     // away -- it exists only to prove the credentials are right, and never
     // leaves this function.
@@ -111,8 +167,6 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       // cannot be used to discover which emails have accounts.
       return res.status(401).json({ error: 'Invalid email or password' });
     }
-
-    const admin = createClient(supabaseUrl, serviceRoleKey);
 
     // 2. Have Supabase mint a one-time code. generateLink does NOT send
     // anything, which is exactly what is wanted here.
