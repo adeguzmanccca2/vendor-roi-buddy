@@ -340,7 +340,7 @@ export default function ClientDashboard() {
         <StatCard accent="amber" icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
         <StatCard accent="orange" icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
         <StatCard accent="ember" icon={DollarSign} label={`Gross Revenue (YTD)`} value={fmtMoney(grossRevenue)}
-          secondary={{ label: 'Net', value: fmtMoney(netRevenue) }} />
+          secondary={{ label: 'Total Sales', value: fmtMoney(netRevenue) }} />
         <StatCard
           accent="rose"
           icon={TrendingUp}
@@ -362,7 +362,7 @@ export default function ClientDashboard() {
 
         <ExpandableChartCard
           title={`ROAS & ROI — ${chartLabel}`}
-          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses net revenue; ROI uses gross revenue (net + avg gross × sales). Months with no attributed sales are left blank."
+          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses total sales; ROI uses gross revenue (total sales + avg gross × sales). Months with no attributed sales are left blank."
         >
           <RoasRoiTrendChart data={roasRoiTrend} />
         </ExpandableChartCard>

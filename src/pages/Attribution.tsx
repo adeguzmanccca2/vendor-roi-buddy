@@ -797,7 +797,7 @@ export default function AttributionPage() {
           icon={DollarSign}
           label="Gross Revenue"
           value={fmtMoney(totals.revenue)}
-          secondary={{ label: 'Net', value: fmtMoney(totals.netRevenue) }}
+          secondary={{ label: 'Total Sales', value: fmtMoney(totals.netRevenue) }}
         />
         <StatCard
           accent="orange"
@@ -825,7 +825,7 @@ export default function AttributionPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <ExpandableChartCard
           title="ROAS & ROI — last 12 months"
-          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses net revenue; ROI uses gross revenue (net + avg gross × sales). Months with no attributed sales are left blank."
+          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses total sales; ROI uses gross revenue (total sales + avg gross × sales). Months with no attributed sales are left blank."
         >
           <RoasRoiTrendChart data={roasRoiTrend} />
         </ExpandableChartCard>
@@ -928,7 +928,7 @@ export default function AttributionPage() {
                   <PerfSortHeader label="Cost" k="cost" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="CPL" k="cpl" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="CPA" k="cpa" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
-                  <PerfSortHeader label="Net Revenue" k="revenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Total Sales" k="revenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="Gross Revenue" k="grossRevenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="ROAS" k="roi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="ROI" k="grossRoi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
@@ -1183,7 +1183,7 @@ function SalesSummaryTip({ row }: { row: VendorPerf }) {
           <span>Gross</span><span className="font-semibold">{fmtMoney(row.grossRevenue)}</span>
         </div>
         <div className="flex items-center justify-between rounded bg-sky-100 px-2 py-1 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">
-          <span>Net</span><span className="font-semibold">{fmtMoney(row.revenue)}</span>
+          <span>Total Sales</span><span className="font-semibold">{fmtMoney(row.revenue)}</span>
         </div>
         {!unassigned && (row.salesShared > 0 ? (
           <div className="rounded bg-amber-100 px-2 py-1 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">

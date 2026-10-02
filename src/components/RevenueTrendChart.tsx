@@ -18,7 +18,7 @@ function RevenueTooltip({ active, payload }: { active?: boolean; payload?: { pay
       <p className="mb-1 font-semibold text-foreground">{p.month} · {p.vehicles} vehicle{p.vehicles === 1 ? '' : 's'}</p>
       <p className="flex items-center gap-2 text-foreground">
         <span className="inline-block h-2 w-2 rounded-sm" style={{ background: NET }} />
-        Net <span className="ml-auto pl-4 tabular-nums">{fmtMoney(p.net)}</span>
+        Total Sales <span className="ml-auto pl-4 tabular-nums">{fmtMoney(p.net)}</span>
       </p>
       <p className="flex items-center gap-2 text-foreground">
         <span className="inline-block h-2 w-2 rounded-sm" style={{ background: ADDED }} />
@@ -42,7 +42,7 @@ export function RevenueTrendChart({ data }: { data: RevenueTrendPoint[] }) {
         <YAxis tick={{ fontSize: 11 }} tickFormatter={(v) => formatCompactMoney(Number(v))} width={56} />
         <Tooltip content={<RevenueTooltip />} cursor={{ fill: 'hsl(var(--muted))', opacity: 0.5 }} />
         <Legend wrapperStyle={{ fontSize: 12 }} />
-        <Bar dataKey="net" name="Net" stackId="rev" fill={NET} stroke="hsl(var(--background))" strokeWidth={2} maxBarSize={36} />
+        <Bar dataKey="net" name="Total Sales" stackId="rev" fill={NET} stroke="hsl(var(--background))" strokeWidth={2} maxBarSize={36} />
         <Bar dataKey="avgGrossAdded" name="Avg gross × vehicles" stackId="rev" fill={ADDED}
           stroke="hsl(var(--background))" strokeWidth={2} radius={[4, 4, 0, 0]} maxBarSize={36} />
       </BarChart>
