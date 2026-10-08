@@ -103,6 +103,15 @@ function pick(...args: (string | number | null | undefined)[]): string | null {
   return null;
 }
 
+// Retail only: a sale type that is present and not "RET" (e.g. "WHLSE"
+// wholesale) is skipped; missing/blank is kept. Keep in sync with
+// isRetailSaleType in src/lib/normalize.ts.
+function isRetailSale(raw: Record<string, unknown>): boolean {
+  const t = pick(raw.sale_type as string, raw.saleType as string, raw.SaleType as string,
+    raw.sales_type as string, raw.deal_type as string, raw.dealType as string);
+  return t == null || t.toUpperCase() === 'RET';
+}
+
 async function mapSale(raw: Record<string, unknown>, organizationId: string) {
   const firstName = pick(raw.first_name as string, raw.firstName as string, raw.customer_first_name as string);
   const lastName  = pick(raw.last_name  as string, raw.lastName  as string, raw.customer_last_name  as string);
@@ -218,14 +227,18 @@ Deno.serve(async (req) => {
   if (raw.length === 0) return json({ error: 'No sales provided' }, 400);
   if (raw.length > 1000) return json({ error: 'Maximum 1000 sales per request' }, 400);
 
-  const sales = await Promise.all(raw.map(s => mapSale(s, cred.organization_id)));
+  const retail = raw.filter(isRetailSale);
+  const nonRetailSkipped = raw.length - retail.length;
+  const sales = await Promise.all(retail.map(s => mapSale(s, cred.organization_id)));
 
   // Upsert on the (organization_id, dedup_hash) unique index so re-sending the same
   // file (or overlapping rows across two runs a day) is a safe no-op instead of a dupe.
-  const { data: upserted, error: upsertErr } = await admin
-    .from('sales')
-    .upsert(sales, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
-    .select('id');
+  const { data: upserted, error: upsertErr } = sales.length > 0
+    ? await admin
+        .from('sales')
+        .upsert(sales, { onConflict: 'organization_id,dedup_hash', ignoreDuplicates: true })
+        .select('id')
+    : { data: [] as { id: string }[], error: null };
 
   if (upsertErr) return json({ error: upsertErr.message }, 500);
 
@@ -247,7 +260,8 @@ Deno.serve(async (req) => {
     success: true,
     received: raw.length,
     inserted: insertedCount,
-    duplicates: raw.length - insertedCount,
+    duplicates: retail.length - insertedCount,
+    non_retail_skipped: nonRetailSkipped,
     ids: upserted?.map(r => r.id) ?? [],
   });
 });

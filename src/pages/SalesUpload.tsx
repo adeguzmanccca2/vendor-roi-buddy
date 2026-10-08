@@ -15,6 +15,7 @@ import { toast } from 'sonner';
 import {
   buildDedupHash,
   guessColumn,
+  isRetailSaleType,
   normalizeEmail,
   normalizeName,
   normalizePhone,
@@ -46,6 +47,7 @@ const FIELDS = [
   { key: 'sale_price',   label: 'Sale price',    candidates: ['sale price', 'price', 'amount'] },
   { key: 'salesperson',  label: 'Salesperson',   candidates: ['salesperson', 'sales rep', 'rep', 'sold by'] },
   { key: 'lending_name', label: 'Lending name',  candidates: ['lending name', 'lender', 'lender name', 'finance source', 'bank'] },
+  { key: 'sale_type',    label: 'Sale type',     candidates: ['sale type', 'sale_type', 'saletype', 'sales type', 'deal type'] },
   { key: 'notes',        label: 'Notes',         candidates: ['notes', 'note', 'comments', 'comment', 'remarks', 'memo'] },
 ] as const;
 
@@ -220,6 +222,13 @@ export default function SalesUploadPage() {
           // Skip completely empty rows
           if (!fullName && !phone && !vin && !stock) {
             rowErrors.push({ row: rowIdx + 2, reason: 'no identifying info' });
+            continue;
+          }
+
+          // Retail only: wholesale (WHLSE) and other non-RET deals aren't sales.
+          const saleType = get(row, 'sale_type');
+          if (!isRetailSaleType(saleType)) {
+            rowErrors.push({ row: rowIdx + 2, reason: `sale type "${saleType}" (only RET is imported)` });
             continue;
           }
 
@@ -527,7 +536,7 @@ export default function SalesUploadPage() {
           {rowSkips.length > 0 && (
             <Alert>
               <AlertTriangle className="h-4 w-4" />
-              <AlertTitle>{rowSkips.length} row(s) skipped — no identifying info</AlertTitle>
+              <AlertTitle>{rowSkips.length} row(s) skipped — not retail or no identifying info</AlertTitle>
               <AlertDescription className="text-xs mt-2 max-h-40 overflow-y-auto">
                 <ul className="space-y-0.5">
                   {rowSkips.slice(0, 20).map(s => (

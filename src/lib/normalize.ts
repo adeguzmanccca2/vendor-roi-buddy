@@ -134,3 +134,13 @@ export function looksNonHuman(value?: string | null): boolean {
   if (/^-?[\d,]+(\.\d+)?$/.test(s)) return true;
   return false;
 }
+
+/** Only retail deals count as sales. A row whose sale type is present and
+ * anything other than "RET" (e.g. "WHLSE" wholesale) is skipped on import.
+ * A missing or blank sale type is kept, so exports without that column
+ * import as before. Mirrored in supabase/functions/receive-sales. */
+export function isRetailSaleType(saleType: unknown): boolean {
+  if (saleType == null) return true;
+  const t = String(saleType).trim().toUpperCase();
+  return t === '' || t === 'RET';
+}

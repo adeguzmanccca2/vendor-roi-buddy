@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildDedupHash,
   guessColumn,
+  isRetailSaleType,
   looksNonHuman,
   normalizeEmail,
   normalizeName,
@@ -239,5 +240,22 @@ describe('buildDedupHash', () => {
     const a = await buildDedupHash({ ...base, name: 'john', vehicle: 'doe|2021 Honda Civic' });
     const b = await buildDedupHash({ ...base, name: 'john|doe', vehicle: '2021 Honda Civic' });
     expect(a).toBe(b);
+  });
+});
+
+describe('isRetailSaleType', () => {
+  it('keeps RET in any case or spacing', () => {
+    expect(isRetailSaleType('RET')).toBe(true);
+    expect(isRetailSaleType(' ret ')).toBe(true);
+  });
+  it('skips wholesale and any other non-RET type', () => {
+    expect(isRetailSaleType('WHLSE')).toBe(false);
+    expect(isRetailSaleType('whlse')).toBe(false);
+    expect(isRetailSaleType('FLEET')).toBe(false);
+  });
+  it('keeps rows with no sale type, so files without the column still import', () => {
+    expect(isRetailSaleType(null)).toBe(true);
+    expect(isRetailSaleType(undefined)).toBe(true);
+    expect(isRetailSaleType('  ')).toBe(true);
   });
 });

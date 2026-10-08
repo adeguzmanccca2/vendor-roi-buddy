@@ -44,6 +44,7 @@ import {
   parseVehicle,
   splitName,
   buildDedupHash,
+  isRetailSaleType,
 // WHY the .js extension on a .ts source file: this function runs under
 // Node's native ESM loader on Vercel (package.json has "type": "module")
 // rather than being bundled into a single file, so relative imports are
@@ -107,6 +108,10 @@ interface EmailCredential {
   sale_count: number;
   lead_count: number;
   location_label: string | null;
+}
+
+function rowSaleType(row: Record<string, unknown>): string | null {
+  return pick(row, 'sale_type', 'saletype', 'sales_type', 'deal_type');
 }
 
 function rowLocation(row: Record<string, unknown>): string | null {
@@ -508,18 +513,30 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const targetTable: 'sales' | 'leads' = isLeadsFile ? 'leads' : 'sales';
   const mapRow = isLeadsFile ? mapLeadRow : mapSaleRow;
 
-  interface OrgResult { rowsImported: number; duplicatesSkipped: number; errors: string[] }
+  interface OrgResult { rowsImported: number; duplicatesSkipped: number; nonRetailSkipped: number; errors: string[] }
   const resultsByCredId = new Map<string, OrgResult>();
-  for (const c of creds) resultsByCredId.set(c.id, { rowsImported: 0, duplicatesSkipped: 0, errors: [] });
+  for (const c of creds) resultsByCredId.set(c.id, { rowsImported: 0, duplicatesSkipped: 0, nonRetailSkipped: 0, errors: [] });
   const unmatchedLocationErrors: string[] = [];
 
   try {
     const buffer = Buffer.from(attachment.Content, 'base64');
     const rawRows = parseAttachmentRows(attachment.Name, buffer);
-    const normalizedRows = rawRows.map(normalizeRowKeys);
+    const allRows = rawRows.map(normalizeRowKeys);
 
-    if (normalizedRows.length === 0) {
+    // Sales files: retail (RET) deals only. Wholesale (WHLSE) and any other
+    // non-RET sale type are dropped before routing, and counted against the
+    // location they belong to (the first credential if it can't be told).
+    const normalizedRows = isLeadsFile ? allRows : allRows.filter(row => {
+      if (isRetailSaleType(rowSaleType(row))) return true;
+      const owner = (multiLocation ? matchCredentialByLocation(creds, rowLocation(row)) : null) ?? creds[0];
+      resultsByCredId.get(owner.id)!.nonRetailSkipped += 1;
+      return false;
+    });
+
+    if (allRows.length === 0) {
       resultsByCredId.get(creds[0].id)!.errors.push('Attachment parsed but contained 0 rows');
+    } else if (normalizedRows.length === 0) {
+      // Every row was non-retail -- nothing to insert, not an error.
     } else if (!multiLocation) {
       const mappedRows = await Promise.all(normalizedRows.map(r => mapRow(r, creds[0].organization_id)));
       const result = resultsByCredId.get(creds[0].id)!;
@@ -601,7 +618,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // be matched to a location -------------------------------------------------
   for (const c of creds) {
     const result = resultsByCredId.get(c.id)!;
-    if (result.rowsImported === 0 && result.duplicatesSkipped === 0 && result.errors.length === 0) continue;
+    if (result.rowsImported === 0 && result.duplicatesSkipped === 0 && result.nonRetailSkipped === 0 && result.errors.length === 0) continue;
     const status: 'success' | 'partial' | 'failed' =
       result.errors.length > 0 && result.rowsImported === 0 ? 'failed' : result.errors.length > 0 ? 'partial' : 'success';
     await admin.from('dms_import_logs').insert({
@@ -634,6 +651,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
 
   const totalRowsImported = [...resultsByCredId.values()].reduce((s, r) => s + r.rowsImported, 0);
   const totalDuplicatesSkipped = [...resultsByCredId.values()].reduce((s, r) => s + r.duplicatesSkipped, 0);
+  const totalNonRetailSkipped = [...resultsByCredId.values()].reduce((s, r) => s + r.nonRetailSkipped, 0);
   const totalErrors = [...resultsByCredId.values()].flatMap(r => r.errors).concat(unmatchedLocationErrors);
   const overallStatus: 'success' | 'partial' | 'failed' =
     totalErrors.length > 0 && totalRowsImported === 0 ? 'failed' : totalErrors.length > 0 ? 'partial' : 'success';
@@ -647,7 +665,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const perLocationLines = multiLocation
       ? creds.map(c => {
           const r = resultsByCredId.get(c.id)!;
-          return `  - ${c.location_label ?? c.organization_id}: ${r.rowsImported} imported, ${r.duplicatesSkipped} duplicates, ${r.errors.length} errors`;
+          return `  - ${c.location_label ?? c.organization_id}: ${r.rowsImported} imported, ${r.duplicatesSkipped} duplicates, ${r.nonRetailSkipped} non-retail skipped, ${r.errors.length} errors`;
         })
       : [];
     const html = plainTextEmailHtml([
@@ -656,6 +674,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       ...(multiLocation ? ['By location:', ...perLocationLines] : []),
       `Rows imported: ${totalRowsImported}`,
       `Duplicates skipped: ${totalDuplicatesSkipped}`,
+      ...(isLeadsFile ? [] : [`Non-retail skipped (sale type not RET, e.g. WHLSE): ${totalNonRetailSkipped}`]),
       `Errors: ${totalErrors.length}${totalErrors.length ? '\n  - ' + totalErrors.join('\n  - ') : ''}`,
       '',
       `View dashboard: ${dashboardUrl}`,
@@ -672,6 +691,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     filename: attachment.Name,
     rowsImported: totalRowsImported,
     duplicatesSkipped: totalDuplicatesSkipped,
+    nonRetailSkipped: totalNonRetailSkipped,
     errors: totalErrors,
     ...(multiLocation
       ? {
