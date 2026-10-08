@@ -157,7 +157,12 @@ async function mapSaleRow(row: Record<string, unknown>, organizationId: string) 
   const saleDateRaw = pick(row, 'sale_date', 'date_sold', 'close_date', 'closed_date', 'date');
   const saleDate = parseLeadDate(saleDateRaw);
 
-  const priceRaw = pick(row, 'gross_revenue', 'total_gross', 'sale_price', 'price', 'amount');
+  // Net sale price (e.g. the DMS "sale_net_price" column) is the sale price;
+  // it fills both sale_price (Price) and total_gross (Total gross) below.
+  const priceRaw = pick(
+    row, 'sale_net_price', 'net_sale_price', 'net_price', 'sale_price', 'price', 'amount',
+    'gross_revenue', 'total_gross',
+  );
   const price = normalizeRevenue(priceRaw);
   const frontGross = normalizeRevenue(pick(row, 'front_gross'));
   const backGross = normalizeRevenue(pick(row, 'back_gross'));
@@ -284,7 +289,44 @@ async function insertMappedRows(
     .select('id');
   if (error) return { rowsImported: 0, duplicatesSkipped: 0, error: error.message };
   const rowsImported = data?.length ?? 0;
+  if (targetTable === 'sales') await backfillMissingPrices(admin, mappedRows);
   return { rowsImported, duplicatesSkipped: mappedRows.length - rowsImported, error: null };
+}
+
+// WHY: a duplicate sale is skipped as-is, so re-sending a file can't fix a
+// sale that was first imported without a price (the sale_net_price column
+// wasn't recognized before). For already-existing sales whose price is still
+// empty, fill sale_price / total_gross / gross_revenue from the file. Sales
+// that already have a price are never touched.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+async function backfillMissingPrices(admin: any, mappedRows: Record<string, unknown>[]) {
+  const priced = mappedRows.filter(r => r.sale_price != null && r.dedup_hash);
+  if (priced.length === 0) return;
+  const orgId = priced[0].organization_id as string;
+  const byHash = new Map(priced.map(r => [r.dedup_hash as string, r]));
+  const hashes = [...byHash.keys()];
+  // Chunked so the IN (...) list of 64-char hashes stays well under URL limits.
+  for (let i = 0; i < hashes.length; i += 100) {
+    const { data: missing, error } = await admin
+      .from('sales')
+      .select('id, dedup_hash')
+      .eq('organization_id', orgId)
+      .in('dedup_hash', hashes.slice(i, i + 100))
+      .is('sale_price', null);
+    if (error) {
+      console.warn('[inbound-email/dms] price backfill lookup failed', error.message);
+      return;
+    }
+    for (const s of (missing ?? []) as { id: string; dedup_hash: string }[]) {
+      const r = byHash.get(s.dedup_hash);
+      if (!r) continue;
+      await admin
+        .from('sales')
+        .update({ sale_price: r.sale_price, total_gross: r.total_gross, gross_revenue: r.gross_revenue })
+        .eq('id', s.id)
+        .eq('organization_id', orgId);
+    }
+  }
 }
 
 // ----------------------------------------------------------------------------

@@ -135,9 +135,12 @@ async function mapSale(raw: Record<string, unknown>, organizationId: string) {
   const saleDateRaw = pick(raw.sale_date as string, raw.saleDate as string, raw.date_sold as string, raw.close_date as string, raw.date as string);
   const saleDate = parseSaleDate(saleDateRaw);
 
+  // Net sale price is the sale price; it fills both sale_price and total_gross.
   const priceRaw = pick(
-    raw.gross_revenue as string, raw.total_gross as string, raw.sale_price as string,
-    raw.salePrice as string, raw.price as string, raw.amount as string,
+    raw.sale_net_price as string, raw.saleNetPrice as string, raw.net_sale_price as string,
+    raw.net_price as string, raw.sale_price as string, raw.salePrice as string,
+    raw.price as string, raw.amount as string,
+    raw.gross_revenue as string, raw.total_gross as string,
   );
   const price = normalizeRevenue(priceRaw);
   const frontGross = normalizeRevenue(pick(raw.front_gross as string, raw.frontGross as string));

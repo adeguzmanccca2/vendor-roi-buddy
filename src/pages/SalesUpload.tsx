@@ -44,7 +44,7 @@ const FIELDS = [
   { key: 'vehicle',      label: 'Vehicle',       candidates: ['vehicle', 'sold vehicle', 'unit', 'description'] },
   { key: 'sale_date',    label: 'Date sold',     candidates: ['date sold', 'sale date', 'sold date', 'deal date', 'closed', 'delivery date'] },
   { key: 'body',         label: 'Body',          candidates: ['body', 'body style', 'bodystyle', 'body type'] },
-  { key: 'sale_price',   label: 'Sale price',    candidates: ['sale price', 'price', 'amount'] },
+  { key: 'sale_price',   label: 'Sale price',    candidates: ['sale_net_price', 'sale net price', 'net sale price', 'net price', 'sale price', 'price', 'amount'] },
   { key: 'salesperson',  label: 'Salesperson',   candidates: ['salesperson', 'sales rep', 'rep', 'sold by'] },
   { key: 'lending_name', label: 'Lending name',  candidates: ['lending name', 'lender', 'lender name', 'finance source', 'bank'] },
   { key: 'sale_type',    label: 'Sale type',     candidates: ['sale type', 'sale_type', 'saletype', 'sales type', 'deal type'] },
