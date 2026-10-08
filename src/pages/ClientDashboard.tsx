@@ -193,20 +193,20 @@ export default function ClientDashboard() {
     });
   }, [activeOrgId, manualLeadCounts, selectedYear]);
 
-  // Revenue on the dashboard is GROSS: sale price + avg gross per vehicle for
-  // the month each sale closed (set on the Attribution page, default $4,000).
+  // Profit = avg gross per vehicle for the month each sale closed (set on the
+  // Attribution page, default $4,000) x sales.
   const netRevenue = useMemo(() => ytdSales.reduce((a, s) => a + Number(s.sale_price ?? 0), 0), [ytdSales]);
-  const grossRevenue = useMemo(
-    () => ytdSales.reduce((a, s) => a + Number(s.sale_price ?? 0) + avgGrossForSale(s.sale_date, avgGrossByMonth), 0),
+  const profit = useMemo(
+    () => ytdSales.reduce((a, s) => a + avgGrossForSale(s.sale_date, avgGrossByMonth), 0),
     [ytdSales, avgGrossByMonth],
   );
   // ROI (YTD) uses only sales credited to one of these vendors -- Unassigned
   // sales earned nothing for any vendor. Same rule as the Attribution page.
-  const attributedGross = useMemo(() => {
+  const attributedProfit = useMemo(() => {
     const vendorIds = new Set(vendors.map(v => v.id));
     return ytdSales
       .filter(s => (saleCredits.get(s.id) ?? []).some(id => vendorIds.has(id)))
-      .reduce((a, s) => a + Number(s.sale_price ?? 0) + avgGrossForSale(s.sale_date, avgGrossByMonth), 0);
+      .reduce((a, s) => a + avgGrossForSale(s.sale_date, avgGrossByMonth), 0);
   }, [ytdSales, saleCredits, vendors, avgGrossByMonth]);
 
   // WHY: Cost is calculated per vendor based on when they first sent a lead.
@@ -303,7 +303,7 @@ export default function ClientDashboard() {
     );
   }
 
-  const roi = ytdCost > 0 ? (attributedGross - ytdCost) / ytdCost : 0;
+  const roi = ytdCost > 0 ? (attributedProfit - ytdCost) / ytdCost : 0;
   const isCurrentYear = selectedYear === currentYear;
   const periodLabel = isCurrentYear ? 'Year-to-date' : `Full year ${selectedYear}`;
 
@@ -339,7 +339,7 @@ export default function ClientDashboard() {
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard accent="amber" icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
         <StatCard accent="orange" icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
-        <StatCard accent="ember" icon={DollarSign} label={`Gross Revenue (YTD)`} value={fmtMoney(grossRevenue)}
+        <StatCard accent="ember" icon={DollarSign} label={`Profit (YTD)`} value={fmtMoney(profit)}
           secondary={{ label: 'Total Sales', value: fmtMoney(netRevenue) }} />
         <StatCard
           accent="rose"
@@ -355,14 +355,14 @@ export default function ClientDashboard() {
       <div className="grid gap-4 lg:grid-cols-2">
         <ExpandableChartCard
           title={`Revenue by month — ${chartLabel}`}
-          description="All sales. Each bar is gross revenue: net sale prices plus the month's avg gross × vehicles sold. Hover a month for the breakdown."
+          description="All sales. Total Sales is the sum of sale prices; Profit is the month's avg gross × vehicles sold. Hover a month for the breakdown."
         >
           <RevenueTrendChart data={revenueTrend} />
         </ExpandableChartCard>
 
         <ExpandableChartCard
           title={`ROAS & ROI — ${chartLabel}`}
-          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses total sales; ROI uses gross revenue (total sales + avg gross × sales). Months with no attributed sales are left blank."
+          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses total sales; ROI uses profit (avg gross × sales). Months with no attributed sales are left blank."
         >
           <RoasRoiTrendChart data={roasRoiTrend} />
         </ExpandableChartCard>

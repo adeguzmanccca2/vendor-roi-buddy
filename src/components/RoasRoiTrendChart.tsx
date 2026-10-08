@@ -3,7 +3,7 @@ import {
 } from 'recharts';
 import type { RoasRoiTrendPoint } from '@/lib/dashboardCharts';
 
-// Two lines, one % axis: ROAS (net revenue) and ROI (gross revenue). Shared
+// Two lines, one % axis: ROAS (total sales) and ROI (profit). Shared
 // by the Attribution page and the client dashboard so both show the same
 // numbers. Null months render as gaps.
 export function RoasRoiTrendChart({ data }: { data: RoasRoiTrendPoint[] }) {

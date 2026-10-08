@@ -77,7 +77,7 @@ interface VendorPerf {
   leads: number;
   sales: number;
   revenue: number;
-  grossRevenue: number;
+  profit: number;
   // Whole number of sales this vendor is credited on, and how many of those
   // are shared with other vendors (sales above is the split share).
   salesCredited: number;
@@ -87,12 +87,12 @@ interface VendorPerf {
   cpa: number;
   closeRate: number;
   roi: number;
-  // Same formula as roi, on grossRevenue instead of net revenue.
-  grossRoi: number;
+  // Same formula as roi, on profit (avg gross x sales) instead of total sales.
+  profitRoi: number;
   category: 'CUT' | 'OPTIMIZE' | 'SCALE' | 'NONE';
 }
 
-type PerfSortKey = 'vendorName' | 'leads' | 'sales' | 'closeRate' | 'cost' | 'cpl' | 'cpa' | 'revenue' | 'grossRevenue' | 'roi' | 'grossRoi' | 'category';
+type PerfSortKey = 'vendorName' | 'leads' | 'sales' | 'closeRate' | 'cost' | 'cpl' | 'cpa' | 'revenue' | 'profit' | 'roi' | 'profitRoi' | 'category';
 
 // Action column sorts by recommendation strength, not alphabetically.
 const CATEGORY_RANK: Record<VendorPerf['category'], number> = { SCALE: 3, OPTIMIZE: 2, CUT: 1, NONE: 0 };
@@ -108,7 +108,7 @@ function perfSortValue(r: VendorPerf, k: PerfSortKey): number | string | null {
     case 'cpl': return r.cpl > 0 ? r.cpl : null;
     case 'cpa': return r.cpa > 0 ? r.cpa : null;
     case 'roi': return r.cost > 0 ? r.roi : null;
-    case 'grossRoi': return r.cost > 0 ? r.grossRoi : null;
+    case 'profitRoi': return r.cost > 0 ? r.profitRoi : null;
     default: return r[k];
   }
 }
@@ -506,15 +506,15 @@ export default function AttributionPage() {
   const perf: VendorPerf[] = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
 
-    const byVendor = new Map<string | null, { revenue: number; grossRevenue: number; sales: number; credited: number; shared: number }>();
+    const byVendor = new Map<string | null, { revenue: number; profit: number; sales: number; credited: number; shared: number }>();
 
     const credit = (vendorId: string | null, sale: SaleRow, share: number) => {
       const key = vendorId && knownVendorIds.has(vendorId) ? vendorId : null;
-      const cur = byVendor.get(key) ?? { revenue: 0, grossRevenue: 0, sales: 0, credited: 0, shared: 0 };
-      // Gross Revenue = Net Revenue + avg gross per vehicle x attributed sales,
-      // using the avg gross of the month each sale closed.
+      const cur = byVendor.get(key) ?? { revenue: 0, profit: 0, sales: 0, credited: 0, shared: 0 };
+      // Profit = avg gross per vehicle x attributed sales, using the avg
+      // gross of the month each sale closed.
       cur.revenue += saleRevenue(sale) * share;
-      cur.grossRevenue += (saleRevenue(sale) + avgGrossForSale(sale.sale_date, avgGrossByMonth)) * share;
+      cur.profit += avgGrossForSale(sale.sale_date, avgGrossByMonth) * share;
       cur.sales += share;
       cur.credited += 1;
       if (share < 1) cur.shared += 1;
@@ -523,7 +523,7 @@ export default function AttributionPage() {
 
     // Credits come from sale_attributions, written by the one matcher that
     // every import path shares. A sale credited to several vendors is SPLIT
-    // equally between them (vehicle, net and gross), so the vendor rows plus
+    // equally between them (vehicle, total sales and profit), so the vendor rows plus
     // Unassigned add up exactly to the totals on the cards above.
     for (const s of sales) {
       const matches = (saleCredits.get(s.id) ?? []).filter(id => knownVendorIds.has(id));
@@ -537,7 +537,7 @@ export default function AttributionPage() {
     }
 
     const rows: VendorPerf[] = vendors.map(v => {
-      const agg = byVendor.get(v.id) ?? { revenue: 0, grossRevenue: 0, sales: 0, credited: 0, shared: 0 };
+      const agg = byVendor.get(v.id) ?? { revenue: 0, profit: 0, sales: 0, credited: 0, shared: 0 };
       const leads = resolveLeadCount({
         vendorId: v.id,
         manualLeadCounts,
@@ -548,12 +548,12 @@ export default function AttributionPage() {
       const cpa = agg.sales > 0 ? cost / agg.sales : 0;
       const closeRate = leads > 0 ? agg.sales / leads : 0;
       const roi = cost > 0 ? (agg.revenue - cost) / cost : 0;
-      const grossRoi = cost > 0 ? (agg.grossRevenue - cost) / cost : 0;
+      const profitRoi = cost > 0 ? (agg.profit - cost) / cost : 0;
       return {
         vendor: v, vendorName: v.name, leads, sales: agg.sales, revenue: agg.revenue,
-        grossRevenue: agg.grossRevenue,
+        profit: agg.profit,
         salesCredited: agg.credited, salesShared: agg.shared,
-        cost, cpl, cpa, closeRate, roi, grossRoi, category: classify(grossRoi, cost),
+        cost, cpl, cpa, closeRate, roi, profitRoi, category: classify(profitRoi, cost),
       };
     });
 
@@ -564,39 +564,39 @@ export default function AttributionPage() {
         leads: unattributedLeads,
         sales: unassignedAgg?.sales ?? 0,
         revenue: unassignedAgg?.revenue ?? 0,
-        grossRevenue: unassignedAgg?.grossRevenue ?? 0,
+        profit: unassignedAgg?.profit ?? 0,
         salesCredited: unassignedAgg?.credited ?? 0, salesShared: 0,
         cost: 0, cpl: 0, cpa: 0,
         closeRate: unattributedLeads > 0 ? (unassignedAgg?.sales ?? 0) / unattributedLeads : 0,
-        roi: 0, grossRoi: 0, category: 'NONE',
+        roi: 0, profitRoi: 0, category: 'NONE',
       });
     }
-    return rows.sort((a, b) => b.grossRevenue - a.grossRevenue);
+    return rows.sort((a, b) => b.profit - a.profit);
   }, [vendors, sales, saleCredits, leadCounts, unattributedLeads, months, manualLeadCounts, avgGrossByMonth]);
 
-  // Revenue here is GROSS (sale price + avg gross per vehicle for the month
-  // it sold); net is kept alongside for the card's secondary line.
+  // Profit = avg gross per vehicle for the month each sale closed x sales;
+  // total sales (net) is kept alongside for the card's secondary line.
   const totals = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
-    const grossOf = (s: SaleRow) => saleRevenue(s) + avgGrossForSale(s.sale_date, avgGrossByMonth);
+    const profitOf = (s: SaleRow) => avgGrossForSale(s.sale_date, avgGrossByMonth);
     const netRevenue = sales.reduce((a, s) => a + saleRevenue(s), 0);
-    const revenue = sales.reduce((a, s) => a + grossOf(s), 0);
-    // Overall ROI compares vendor cost with the gross of vendor-ATTRIBUTED
+    const profit = sales.reduce((a, s) => a + profitOf(s), 0);
+    // Overall ROI compares vendor cost with the profit of vendor-ATTRIBUTED
     // sales only -- Unassigned sales earned nothing for any vendor.
-    const attributedGross = sales
+    const attributedProfit = sales
       .filter(s => (saleCredits.get(s.id) ?? []).some(id => knownVendorIds.has(id)))
-      .reduce((a, s) => a + grossOf(s), 0);
+      .reduce((a, s) => a + profitOf(s), 0);
     const salesCount = sales.length;
     const cost = perf.reduce((a, r) => a + r.cost, 0);
     const leads = perf.reduce((a, r) => a + r.leads, 0);
     return {
-      revenue,
+      profit,
       netRevenue,
       sales: salesCount,
       cost,
       leads,
-      attributedGross,
-      roi: cost > 0 ? (attributedGross - cost) / cost : 0,
+      attributedProfit,
+      roi: cost > 0 ? (attributedProfit - cost) / cost : 0,
     };
   }, [sales, perf, vendors, saleCredits, avgGrossByMonth]);
 
@@ -627,14 +627,14 @@ export default function AttributionPage() {
         if (bv === null) return -1;
         return (av < bv ? -1 : 1) * dir;
       }
-      return b.grossRevenue - a.grossRevenue || a.vendorName.localeCompare(b.vendorName);
+      return b.profit - a.profit || a.vendorName.localeCompare(b.vendorName);
     });
   }, [perf, perfSortKey, perfSortDir]);
 
   const roiChart = useMemo(() =>
     perf.filter(p => p.cost > 0).slice(0, 10).map(p => ({
       name: p.vendorName.length > 14 ? p.vendorName.slice(0, 14) + '…' : p.vendorName,
-      roi: Math.round(p.grossRoi * 100),
+      roi: Math.round(p.profitRoi * 100),
       category: p.category,
     })), [perf]);
 
@@ -671,9 +671,9 @@ export default function AttributionPage() {
       cpl: p.cpl.toFixed(2),
       cpa: p.cpa.toFixed(2),
       net_revenue: p.revenue.toFixed(2),
-      gross_revenue: p.grossRevenue.toFixed(2),
+      profit: p.profit.toFixed(2),
       roas_pct: p.cost > 0 ? (p.roi * 100).toFixed(2) : '',
-      roi_pct: p.cost > 0 ? (p.grossRoi * 100).toFixed(2) : '',
+      roi_pct: p.cost > 0 ? (p.profitRoi * 100).toFixed(2) : '',
       category: p.category,
     }));
     downloadCsv(`vendor-roi-${period.replace(/:/g, '-')}-${new Date().toISOString().slice(0, 10)}.csv`, rows);
@@ -795,8 +795,8 @@ export default function AttributionPage() {
         <StatCard
           accent="amber"
           icon={DollarSign}
-          label="Gross Revenue"
-          value={fmtMoney(totals.revenue)}
+          label="Profit"
+          value={fmtMoney(totals.profit)}
           secondary={{ label: 'Total Sales', value: fmtMoney(totals.netRevenue) }}
         />
         <StatCard
@@ -825,7 +825,7 @@ export default function AttributionPage() {
       <div className="grid gap-4 lg:grid-cols-2">
         <ExpandableChartCard
           title="ROAS & ROI — last 12 months"
-          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses total sales; ROI uses gross revenue (total sales + avg gross × sales). Months with no attributed sales are left blank."
+          description="Vendor-attributed sales vs. total vendor cost each month. ROAS uses total sales; ROI uses profit (avg gross × sales). Months with no attributed sales are left blank."
         >
           <RoasRoiTrendChart data={roasRoiTrend} />
         </ExpandableChartCard>
@@ -929,9 +929,9 @@ export default function AttributionPage() {
                   <PerfSortHeader label="CPL" k="cpl" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="CPA" k="cpa" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="Total Sales" k="revenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
-                  <PerfSortHeader label="Gross Revenue" k="grossRevenue" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="Profit" k="profit" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="ROAS" k="roi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
-                  <PerfSortHeader label="ROI" k="grossRoi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
+                  <PerfSortHeader label="ROI" k="profitRoi" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} />
                   <PerfSortHeader label="Action" k="category" sortKey={perfSortKey} sortDir={perfSortDir} onClick={togglePerfSort} align="center" />
                 </tr>
               </thead>
@@ -985,9 +985,9 @@ export default function AttributionPage() {
                     <td className="px-4 py-2 text-right">{r.cpl > 0 ? fmtMoney(r.cpl) : '—'}</td>
                     <td className="px-4 py-2 text-right">{r.cpa > 0 ? fmtMoney(r.cpa) : '—'}</td>
                     <td className="px-4 py-2 text-right">{fmtMoney(r.revenue)}</td>
-                    <td className="px-4 py-2 text-right">{fmtMoney(r.grossRevenue)}</td>
+                    <td className="px-4 py-2 text-right">{fmtMoney(r.profit)}</td>
                     <td className="px-4 py-2 text-right">{r.cost > 0 ? `${(r.roi * 100).toFixed(0)}%` : '—'}</td>
-                    <td className="px-4 py-2 text-right">{r.cost > 0 ? `${(r.grossRoi * 100).toFixed(0)}%` : '—'}</td>
+                    <td className="px-4 py-2 text-right">{r.cost > 0 ? `${(r.profitRoi * 100).toFixed(0)}%` : '—'}</td>
                     <td className="px-4 py-2 text-center"><CategoryBadge cat={r.category} /></td>
                   </tr>
                 ))}
@@ -1018,7 +1018,7 @@ export default function AttributionPage() {
             };
             const sharedCount = list.filter(s => shareOf(s) < 1).length;
             const rev = list.reduce((a, s) => a + saleRevenue(s) * shareOf(s), 0);
-            const grossRev = list.reduce((a, s) => a + (saleRevenue(s) + avgGrossForSale(s.sale_date, avgGrossByMonth)) * shareOf(s), 0);
+            const profit = list.reduce((a, s) => a + avgGrossForSale(s.sale_date, avgGrossByMonth) * shareOf(s), 0);
 
             // Lead date the sale matched against — prefer the sale's own lead_id
             // (set whenever Match Leads or a manual link ran, regardless of VIN/
@@ -1049,7 +1049,7 @@ export default function AttributionPage() {
               <>
                 <DialogHeader>
                   <DialogTitle>Sales attributed to {vendorSalesView.name}</DialogTitle>
-                  <DialogDescription>{list.length} sale(s) · {fmtMoney(grossRev)} gross · {fmtMoney(rev)} net
+                  <DialogDescription>{list.length} sale(s) · {fmtMoney(profit)} profit · {fmtMoney(rev)} total sales
                     {sharedCount > 0 && ` · ${sharedCount} shared with other vendors (split equally)`}</DialogDescription>
                 </DialogHeader>
                 <div className="max-h-[60vh] overflow-auto">
@@ -1180,7 +1180,7 @@ function SalesSummaryTip({ row }: { row: VendorPerf }) {
       </p>
       <div className="space-y-1">
         <div className="flex items-center justify-between rounded bg-emerald-100 px-2 py-1 text-emerald-800 dark:bg-emerald-900/40 dark:text-emerald-300">
-          <span>Gross</span><span className="font-semibold">{fmtMoney(row.grossRevenue)}</span>
+          <span>Profit</span><span className="font-semibold">{fmtMoney(row.profit)}</span>
         </div>
         <div className="flex items-center justify-between rounded bg-sky-100 px-2 py-1 text-sky-800 dark:bg-sky-900/40 dark:text-sky-300">
           <span>Total Sales</span><span className="font-semibold">{fmtMoney(row.revenue)}</span>

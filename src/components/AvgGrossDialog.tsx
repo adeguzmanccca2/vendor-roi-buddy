@@ -93,7 +93,7 @@ export function AvgGrossDialog({ open, onOpenChange, organizationId, months, val
         <DialogHeader>
           <DialogTitle>Avg gross per vehicle</DialogTitle>
           <DialogDescription>
-            Gross Revenue = Net Revenue + avg gross × attributed sales, using the avg
+            Profit = avg gross × attributed sales, using the avg
             gross of the month each sale closed. Months you
             don't change use {DEFAULT_AVG_GROSS.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 })}.
           </DialogDescription>

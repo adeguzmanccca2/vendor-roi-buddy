@@ -139,8 +139,8 @@ export function buildVendorRoiTrend({
   vendors: VendorRoiTrendVendor[];
   creditsBySaleId: Map<string, string[]>;
   months?: number;
-  // When given, ROI is on gross revenue (sale price + the month's avg gross
-  // per vehicle); without it, on sale price alone.
+  // When given, ROI is on profit (the month's avg gross per vehicle for each
+  // sale); without it, on sale price alone.
   avgGrossByMonth?: Record<string, number>;
 }) {
   const now = new Date();
@@ -176,8 +176,9 @@ export function buildVendorRoiTrend({
 
     const byVendor = revenueByBucketVendor.get(bucketKey) ?? new Map<string, number>();
     for (const vendorId of matches) {
-      const saleValue = (Number(sale.sale_price ?? 0)
-        + (avgGrossByMonth ? avgGrossForSale(sale.sale_date, avgGrossByMonth) : 0)) / matches.length;
+      const saleValue = (avgGrossByMonth
+        ? avgGrossForSale(sale.sale_date, avgGrossByMonth)
+        : Number(sale.sale_price ?? 0)) / matches.length;
       byVendor.set(vendorId, (byVendor.get(vendorId) ?? 0) + saleValue);
     }
     revenueByBucketVendor.set(bucketKey, byVendor);
@@ -215,8 +216,8 @@ export interface RoasRoiTrendPoint {
 
 // Dealership-wide ROAS and ROI per month, same formulas as the Vendor
 // performance table:
-//   ROAS = (net revenue - cost) / cost
-//   ROI  = (gross revenue - cost) / cost,  gross = net + avg gross x sales
+//   ROAS = (total sales - cost) / cost
+//   ROI  = (profit - cost) / cost,  profit = avg gross x sales
 // Revenue counts only sales credited to one of the given vendors (like the
 // Overall ROI card -- Unassigned sales earned nothing for any vendor), cost
 // is the summed monthly_cost of those vendors, and avg gross is the month's
@@ -240,12 +241,12 @@ export function buildRoasRoiTrend({
   const monthlyCost = vendors.reduce((a, v) => a + Number(v.monthly_cost ?? 0), 0);
 
   const keys: string[] = [];
-  const agg: Record<string, { net: number; gross: number; sales: number }> = {};
+  const agg: Record<string, { net: number; profit: number; sales: number }> = {};
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
     const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
     keys.push(key);
-    agg[key] = { net: 0, gross: 0, sales: 0 };
+    agg[key] = { net: 0, profit: 0, sales: 0 };
   }
 
   const vendorIds = new Set(vendors.map(v => v.id));
@@ -253,9 +254,8 @@ export function buildRoasRoiTrend({
     const key = saleMonthKey(s.sale_date);
     if (!key || !(key in agg)) continue;
     if (!(creditsBySaleId.get(s.id) ?? []).some(id => vendorIds.has(id))) continue;
-    const net = Number(s.sale_price ?? 0);
-    agg[key].net += net;
-    agg[key].gross += net + avgGrossForSale(s.sale_date, avgGrossByMonth);
+    agg[key].net += Number(s.sale_price ?? 0);
+    agg[key].profit += avgGrossForSale(s.sale_date, avgGrossByMonth);
     agg[key].sales += 1;
   }
 
@@ -265,7 +265,7 @@ export function buildRoasRoiTrend({
     return {
       month: `${key.slice(5)}/${key.slice(2, 4)}`,
       roas: usable ? Math.round(((a.net - monthlyCost) / monthlyCost) * 100) : null,
-      roi: usable ? Math.round(((a.gross - monthlyCost) / monthlyCost) * 100) : null,
+      roi: usable ? Math.round(((a.profit - monthlyCost) / monthlyCost) * 100) : null,
     };
   });
 }
@@ -274,14 +274,13 @@ export interface RevenueTrendPoint {
   month: string;
   vehicles: number;
   net: number;
-  // avg gross per vehicle x vehicles: the part that turns net into gross.
-  avgGrossAdded: number;
-  gross: number;
+  // Profit: the month's avg gross per vehicle x vehicles sold.
+  profit: number;
 }
 
 // Dealership revenue per month, every sale (no attribution): net = sale
-// prices, gross = net + the month's avg gross per vehicle x vehicles sold.
-// Same numbers as the Gross Revenue cards. Months are UTC.
+// prices (Total Sales), profit = the month's avg gross per vehicle x
+// vehicles sold. Same numbers as the Profit cards. Months are UTC.
 export function buildRevenueTrend({
   sales,
   avgGrossByMonth,
@@ -294,19 +293,19 @@ export function buildRevenueTrend({
   now?: Date;
 }): RevenueTrendPoint[] {
   const keys: string[] = [];
-  const agg: Record<string, { vehicles: number; net: number; added: number }> = {};
+  const agg: Record<string, { vehicles: number; net: number; profit: number }> = {};
   for (let i = months - 1; i >= 0; i--) {
     const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth() - i, 1));
     const key = `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, '0')}`;
     keys.push(key);
-    agg[key] = { vehicles: 0, net: 0, added: 0 };
+    agg[key] = { vehicles: 0, net: 0, profit: 0 };
   }
   for (const s of sales) {
     const key = saleMonthKey(s.sale_date);
     if (!key || !(key in agg)) continue;
     agg[key].vehicles += 1;
     agg[key].net += Number(s.sale_price ?? 0);
-    agg[key].added += avgGrossForSale(s.sale_date, avgGrossByMonth);
+    agg[key].profit += avgGrossForSale(s.sale_date, avgGrossByMonth);
   }
   return keys.map(key => {
     const a = agg[key];
@@ -314,8 +313,7 @@ export function buildRevenueTrend({
       month: `${key.slice(5)}/${key.slice(2, 4)}`,
       vehicles: a.vehicles,
       net: Math.round(a.net),
-      avgGrossAdded: Math.round(a.added),
-      gross: Math.round(a.net + a.added),
+      profit: Math.round(a.profit),
     };
   });
 }

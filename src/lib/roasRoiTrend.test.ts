@@ -6,7 +6,7 @@ describe('buildRoasRoiTrend', () => {
   const vendors = [{ id: 'v1', monthly_cost: 1000 }, { id: 'v2', monthly_cost: 1000 }, { id: 'v3', monthly_cost: null }];
   const credits = new Map([['s1', ['v1']], ['s2', ['v1', 'v2']]]);
 
-  it('computes ROAS on net and ROI on net + avg gross x sales', () => {
+  it('computes ROAS on total sales and ROI on profit (avg gross x sales)', () => {
     const data = buildRoasRoiTrend({
       sales: [
         { id: 's1', sale_date: '2026-09-02T12:00:00+00:00', sale_price: 3000 },
@@ -23,19 +23,19 @@ describe('buildRoasRoiTrend', () => {
     expect(sep.month).toBe('09/26');
     // cost 2000, net 4000 -> (4000-2000)/2000 = 100%
     expect(sep.roas).toBe(100);
-    // gross 4000 + 2 x 2000 = 8000 -> 300%
-    expect(sep.roi).toBe(300);
+    // profit 2 x 2000 = 4000 -> (4000-2000)/2000 = 100%
+    expect(sep.roi).toBe(100);
   });
 
   it('uses the default avg gross when a month has no stored value', () => {
     const data = buildRoasRoiTrend({
-      sales: [{ id: 's1', sale_date: '2026-09-02T12:00:00+00:00', sale_price: 0 }],
+      sales: [{ id: 's1', sale_date: '2026-09-02T12:00:00+00:00', sale_price: 50000 }],
       vendors,
       creditsBySaleId: credits,
       avgGrossByMonth: {},
       now,
     });
-    // gross 0 + 4000 vs cost 2000 -> 100%
+    // profit 4000 (sale price ignored) vs cost 2000 -> 100%
     expect(data[data.length - 1].roi).toBe(100);
   });
 
@@ -51,8 +51,8 @@ describe('buildRoasRoiTrend', () => {
   });
 });
 
-describe('buildVendorRoiTrend with avg gross', () => {
-  it('adds the month avg gross per credited sale when avgGrossByMonth is given', async () => {
+describe('buildVendorRoiTrend with profit', () => {
+  it('uses the month avg gross per credited sale when avgGrossByMonth is given', async () => {
     const { buildVendorRoiTrend } = await import('./dashboardCharts');
     const args = {
       sales: [{ id: 's1', sale_date: new Date().toISOString(), sale_price: 1000 }],
@@ -60,14 +60,14 @@ describe('buildVendorRoiTrend with avg gross', () => {
       creditsBySaleId: new Map([['s1', ['v1']]]),
       months: 1,
     };
-    // Net: (1000 - 1000) / 1000 = 0%; gross: (1000 + 4000 - 1000) / 1000 = 400%
+    // Net: (1000 - 1000) / 1000 = 0%; profit: (4000 - 1000) / 1000 = 300%
     expect(buildVendorRoiTrend(args).data[0]['vendor:v1']).toBe(0);
-    expect(buildVendorRoiTrend({ ...args, avgGrossByMonth: {} }).data[0]['vendor:v1']).toBe(400);
+    expect(buildVendorRoiTrend({ ...args, avgGrossByMonth: {} }).data[0]['vendor:v1']).toBe(300);
   });
 });
 
 describe('buildRevenueTrend', () => {
-  it('sums every sale per month: net, avg gross x vehicles, gross', async () => {
+  it('sums every sale per month: net and profit (avg gross x vehicles)', async () => {
     const { buildRevenueTrend } = await import('./dashboardCharts');
     const data = buildRevenueTrend({
       sales: [
@@ -79,8 +79,8 @@ describe('buildRevenueTrend', () => {
       now: new Date(Date.UTC(2026, 8, 15)),
     });
     expect(data).toHaveLength(12);
-    expect(data[11]).toEqual({ month: '09/26', vehicles: 2, net: 50000, avgGrossAdded: 8000, gross: 58000 });
-    expect(data[10]).toEqual({ month: '08/26', vehicles: 1, net: 10000, avgGrossAdded: 3500, gross: 13500 });
+    expect(data[11]).toEqual({ month: '09/26', vehicles: 2, net: 50000, profit: 8000 });
+    expect(data[10]).toEqual({ month: '08/26', vehicles: 1, net: 10000, profit: 3500 });
     expect(data[0].vehicles).toBe(0);
   });
 });
