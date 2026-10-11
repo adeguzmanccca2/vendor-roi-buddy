@@ -20,7 +20,7 @@ import { RevenueTrendChart } from '@/components/RevenueTrendChart';
 import { VendorLeadsChart } from '@/components/VendorLeadsChart';
 import { useAvgGrossByMonth } from '@/hooks/useAvgGrossByMonth';
 import { avgGrossForSale } from '@/lib/avgGross';
-import { costUntil, fetchLastLeadDates, NEVER } from '@/lib/vendorCost';
+import { costUntil, costsInMonth, fetchLastLeadDates, monthKeysBetween } from '@/lib/vendorCost';
 import { formatCompactMoney } from '@/lib/utils';
 import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
@@ -29,7 +29,6 @@ interface SaleLite { id: string; sale_date: string | null; sale_price: number | 
 interface LeadLite { lead_date: string | null; vendor_id: string | null }
 // cost_until: last month the vendor's cost counts (null = no end) -- see vendorCost.ts.
 interface VendorLite { id: string; name: string; monthly_cost: number | null; is_active: boolean; cost_until: string | null }
-interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null; cost_until: string | null }
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -49,7 +48,6 @@ export default function ClientDashboard() {
   const [ytdSales, setYtdSales] = useState<{ id: string; sale_date: string | null; sale_price: number | null }[]>([]);
   // sale_id -> credited vendor ids (sale_attributions), for attributed-only ROI.
   const [saleCredits, setSaleCredits] = useState<Map<string, string[]>>(new Map());
-  const [vendorCosts, setVendorCosts] = useState<VendorCost[]>([]);
   const [trendSales, setTrendSales] = useState<SaleLite[]>([]);
   const [trendLeads, setTrendLeads] = useState<LeadLite[]>([]);
   const [vendors, setVendors] = useState<VendorLite[]>([]);
@@ -93,7 +91,6 @@ export default function ClientDashboard() {
     setStats({ leads: 0, sales: 0 });
     setYtdSales([]);
     setSaleCredits(new Map());
-    setVendorCosts([]);
     setTrendSales([]);
     setExportRows([]);
     setOrg(null);
@@ -124,11 +121,6 @@ export default function ClientDashboard() {
       // All vendors, deactivated too: their sales still count, and their cost
       // counts through the month of their last lead (vendorCost.ts).
       supabase.from('vendors').select('id, name, monthly_cost, is_active').eq('organization_id', orgId),
-      // First lead date per vendor — used to calculate months active
-      supabase.from('leads').select('vendor_id, lead_date')
-        .eq('organization_id', orgId)
-        .not('vendor_id', 'is', null)
-        .order('lead_date', { ascending: true }),
       // Monthly trend for the charts: the selected year
       supabase.from('sales').select('id, sale_date, sale_price, vendor_id, lead_id')
         .eq('organization_id', orgId)
@@ -149,27 +141,12 @@ export default function ClientDashboard() {
       // Untyped client: sale_attributions is missing from the stale types.ts.
       (supabase as unknown as SupabaseClient).from('sale_attributions').select('sale_id, vendor_id')
         .eq('organization_id', orgId),
-    ]).then(async ([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes, creditsRes]) => {
+    ]).then(async ([orgRes, leadsRes, salesRes, vendorsRes, trendSalesRes, trendLeadsRes, leadsExportRes, creditsRes]) => {
       const lastLeadDates = await fetchLastLeadDates(
         supabase, orgId, (vendorsRes.data ?? []).filter((v: any) => v.is_active === false).map((v: any) => v.id),
       );
       const untilOf = (v: any) => costUntil(v.is_active, lastLeadDates[v.id]);
       setOrg(orgRes.data ?? null);
-
-      // Build a map of vendor_id → earliest lead_date
-      const firstLeadByVendor: Record<string, string> = {};
-      for (const l of allLeadsRes.data ?? []) {
-        if (l.vendor_id && l.lead_date && !firstLeadByVendor[l.vendor_id]) {
-          firstLeadByVendor[l.vendor_id] = l.lead_date;
-        }
-      }
-
-      const costs: VendorCost[] = (vendorsRes.data ?? []).map((v: any) => ({
-        id: v.id,
-        monthly_cost: v.monthly_cost,
-        firstLeadDate: firstLeadByVendor[v.id] ?? null,
-        cost_until: untilOf(v),
-      }));
 
       const vendorIds = (vendorsRes.data ?? []).map((v: any) => v.id);
       const fallbackCountsByVendor: Record<string, number> = {};
@@ -184,7 +161,6 @@ export default function ClientDashboard() {
         fallbackUnassignedCount: (leadsExportRes.data ?? []).filter((lead: any) => !lead.vendor_id).length,
       });
 
-      setVendorCosts(costs);
       setStats({ leads: leadCount, sales: salesRes.data?.length ?? 0 });
       setYtdSales((salesRes.data ?? []) as { id: string; sale_date: string | null; sale_price: number | null }[]);
       const credits = new Map<string, string[]>();
@@ -211,62 +187,38 @@ export default function ClientDashboard() {
   );
   // ROI (YTD) uses only sales credited to one of these vendors -- Unassigned
   // sales earned nothing for any vendor. Same rule as the Attribution page.
-  const attributedProfit = useMemo(() => {
+  const attributedSales = useMemo(() => {
     const vendorIds = new Set(vendors.map(v => v.id));
-    return ytdSales
-      .filter(s => (saleCredits.get(s.id) ?? []).some(id => vendorIds.has(id)))
-      .reduce((a, s) => a + avgGrossForSale(s.sale_date, avgGrossByMonth), 0);
-  }, [ytdSales, saleCredits, vendors, avgGrossByMonth]);
+    return ytdSales.filter(s => (saleCredits.get(s.id) ?? []).some(id => vendorIds.has(id)));
+  }, [ytdSales, saleCredits, vendors]);
+  const attributedProfit = useMemo(
+    () => attributedSales.reduce((a, s) => a + avgGrossForSale(s.sale_date, avgGrossByMonth), 0),
+    [attributedSales, avgGrossByMonth],
+  );
 
   // WHY: Cost is calculated per vendor based on when they first sent a lead.
   // months_active = months from first lead date to end of selected period.
   // This avoids over-counting cost for vendors that started mid-year.
-  const ytdCost = useMemo(() => {
-    if (vendorCosts.length === 0) return 0;
-
-    // End of the selected period — Dec 31 for past years, today for current year
-    const periodEnd = selectedYear < currentYear
-      ? new Date(selectedYear, 11, 31, 23, 59, 59)
-      : new Date();
-
-    // Start of the selected year
-    const yearStart = new Date(selectedYear, 0, 1);
-
-    return vendorCosts.reduce((total, v) => {
-      const monthlyCost = Number(v.monthly_cost ?? 0);
-      if (monthlyCost === 0) return total;
-
-      // No leads yet — can't determine start date, exclude from cost
-      if (!v.firstLeadDate) return total;
-      if (v.cost_until === NEVER) return total;
-
-      const firstLead = new Date(v.firstLeadDate);
-
-      // Deactivated vendor: cost stops after the month of its last lead.
-      const until = v.cost_until;
-      const vendorEnd = until
-        ? new Date(Date.UTC(Number(until.slice(0, 4)), Number(until.slice(5, 7)), 0, 23, 59, 59))
-        : periodEnd;
-      const end = vendorEnd < periodEnd ? vendorEnd : periodEnd;
-
-      // Vendor's first lead is after the selected period — not active this period
-      if (firstLead > end) return total;
-
-      // Vendor start for this period = later of (first lead date, Jan 1 of selected year)
-      const vendorStart = firstLead < yearStart ? yearStart : firstLead;
-      // Cost ended before this year started.
-      if (end < vendorStart) return total;
-
-      // Months active = difference in months between vendorStart and the
-      // period end (or the vendor's cost end, if earlier).
-      // Using ceil so a partial month counts as a full month
-      const monthsActive = Math.ceil(
-        (end.getTime() - vendorStart.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
-      );
-
-      return total + monthlyCost * Math.max(monthsActive, 1);
-    }, 0);
-  }, [vendorCosts, selectedYear]);
+  // Cost for the selected year: each vendor's monthly cost for every
+  // FINISHED month -- January through last month for the current year (a
+  // month is charged once it has ended), all 12 months of a past year.
+  // Active vendors cost every month whether or not they sent leads; a
+  // deactivated vendor only through the month of its last lead
+  // (vendorCost.ts). Same rule as the Attribution page.
+  const costMonthKeys = useMemo(() => {
+    // getMonth() is 0-based, so in October it is 9 = Jan..Sep finished.
+    const lastMonth = selectedYear < currentYear ? 12 : new Date().getMonth();
+    return monthKeysBetween(new Date(Date.UTC(selectedYear, 0, 1)), new Date(Date.UTC(selectedYear, lastMonth, 1)));
+  }, [selectedYear]);
+  // Per vendor, for the Cost hover: months counted and total.
+  const costBreakdown = useMemo(() => vendors
+    .map(v => {
+      const months = costMonthKeys.filter(k => costsInMonth(v.cost_until, k)).length;
+      return { name: v.name, active: v.is_active !== false, months, total: Number(v.monthly_cost ?? 0) * months };
+    })
+    .filter(r => r.total > 0)
+    .sort((a, b) => b.total - a.total), [vendors, costMonthKeys]);
+  const ytdCost = useMemo(() => costBreakdown.reduce((a, r) => a + r.total, 0), [costBreakdown]);
 
   // Charts follow the year picker: Jan-Dec for a past year, Jan through this
   // month for the current year (no empty future months).
@@ -327,6 +279,15 @@ export default function ClientDashboard() {
   const roi = ytdCost > 0 ? (attributedProfit - ytdCost) / ytdCost : 0;
   const isCurrentYear = selectedYear === currentYear;
   const periodLabel = isCurrentYear ? 'Year-to-date' : `Full year ${selectedYear}`;
+  // For the card hovers.
+  const fmtDay = (d: Date) => d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  const rangeText = isCurrentYear
+    ? `Jan 1 – ${fmtDay(new Date())}, ${selectedYear}`
+    : `Jan 1 – Dec 31, ${selectedYear}`;
+  const monthName = (k: string) => new Date(`${k}-15T00:00:00Z`).toLocaleDateString('en-US', { month: 'short', timeZone: 'UTC' });
+  const costRangeText = costMonthKeys.length > 0
+    ? `${monthName(costMonthKeys[0])}–${monthName(costMonthKeys[costMonthKeys.length - 1])} ${selectedYear}`
+    : 'no finished months yet';
 
   return (
     <div className="space-y-6">
@@ -358,16 +319,49 @@ export default function ClientDashboard() {
       </div>
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-        <StatCard accent="amber" icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)} />
-        <StatCard accent="orange" icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)} />
+        <StatCard accent="amber" icon={ListChecks} label={`Leads (YTD)`} value={String(stats.leads)}
+          info={<>
+            <p className="font-semibold">Leads, {rangeText}</p>
+            <p>Every lead dated in this range, from all vendors (deactivated ones too) plus leads with no vendor,
+              and the manual Parts/Service lead counts.</p>
+          </>} />
+        <StatCard accent="orange" icon={ShoppingCart} label={`Sales (YTD)`} value={String(stats.sales)}
+          info={<>
+            <p className="font-semibold">Sales, {rangeText}</p>
+            <p>Every sale dated in this range, whether or not it was matched to a vendor.</p>
+            <p>{attributedSales.length} of them are credited to a vendor.</p>
+          </>} />
         <StatCard accent="ember" icon={DollarSign} label={`Profit (YTD)`} value={fmtMoney(profit)}
-          secondary={{ label: 'Total Sales', value: fmtMoney(netRevenue) }} />
+          secondary={{ label: 'Total Sales', value: fmtMoney(netRevenue) }}
+          info={<>
+            <p className="font-semibold">Profit &amp; Total Sales, {rangeText}</p>
+            <p><b>Profit</b> = each sale × the average gross for the month it sold (set with Avg Gross on the
+              Attribution page; $4,000 when not set). All {stats.sales} sales.</p>
+            <p><b>Total Sales</b> = the sum of sale prices.</p>
+          </>} />
         <StatCard
           accent="rose"
           icon={TrendingUp}
           label={`ROI (YTD)`}
           value={ytdCost > 0 && stats.sales > 0 ? `${(roi * 100).toFixed(0)}%` : '—'}
           secondary={{ label: 'Cost', value: fmtMoney(ytdCost) }}
+          info={<>
+            <p className="font-semibold">ROI = (profit from vendor-attributed sales − cost) ÷ cost</p>
+            <p>Profit from the {attributedSales.length} sales credited to a vendor: {fmtMoney(attributedProfit)}.
+              Sales with no vendor credit aren't included.</p>
+            <p><b>Cost</b>, {costRangeText}{isCurrentYear && ' (finished months only — the current month is added once it ends)'}:
+              each active vendor's monthly cost for every month; a deactivated vendor only through the month of its last lead.</p>
+            {costBreakdown.length > 0 && (
+              <ul className="pt-1">
+                {costBreakdown.map(r => (
+                  <li key={r.name} className="flex justify-between gap-3 tabular-nums">
+                    <span>{r.name}{!r.active && ' (deactivated)'} · {r.months} mo</span>
+                    <span>{fmtMoney(r.total)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>}
         />
       </div>
 

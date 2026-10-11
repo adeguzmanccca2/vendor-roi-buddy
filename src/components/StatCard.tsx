@@ -1,5 +1,7 @@
-import { LucideIcon } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { Info, LucideIcon } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 
 /**
  * Compact KPI tile used across the Attribution page and the client dashboard.
@@ -34,6 +36,7 @@ export function StatCard({
   sub,
   accent = 'default',
   secondary,
+  info,
 }: {
   icon: LucideIcon;
   label: string;
@@ -52,18 +55,23 @@ export function StatCard({
    * ("Cost $17,749") and stays de-emphasised.
    */
   secondary?: { label: string; value: string };
+  /**
+   * Shown on hover/focus: what the figures cover (date range, which sales or
+   * vendors count, how it's calculated). Adds a small (i) next to the icon.
+   */
+  info?: ReactNode;
 }) {
   const filled = accent !== 'default';
   const labelClass = `truncate text-[9px] uppercase leading-none ${filled ? 'text-white/85' : 'text-muted-foreground'}`;
   const valueClass = `truncate text-base font-bold leading-none ${filled ? 'text-white' : 'text-foreground'}`;
 
-  return (
+  const card = (
     <Card
-      className={
-        filled
-          ? `border-transparent bg-gradient-to-br shadow-sm ${ACCENTS[accent]}`
-          : undefined
-      }
+      tabIndex={info ? 0 : undefined}
+      className={[
+        filled ? `border-transparent bg-gradient-to-br shadow-sm ${ACCENTS[accent]}` : '',
+        info ? 'cursor-help focus:outline-none focus-visible:ring-2 focus-visible:ring-ring' : '',
+      ].join(' ').trim() || undefined}
     >
       <CardContent className="p-2">
         {/* With a secondary metric the two sit side by side as equal columns,
@@ -92,9 +100,22 @@ export function StatCard({
             )}
           </div>
 
-          <Icon className={`h-3 w-3 shrink-0 ${filled ? 'text-white/85' : 'text-muted-foreground'}`} />
+          <div className="flex shrink-0 items-center gap-1">
+            {info && <Info className={`h-3 w-3 ${filled ? 'text-white/70' : 'text-muted-foreground'}`} aria-hidden />}
+            <Icon className={`h-3 w-3 ${filled ? 'text-white/85' : 'text-muted-foreground'}`} />
+          </div>
         </div>
       </CardContent>
     </Card>
+  );
+
+  if (!info) return card;
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>{card}</TooltipTrigger>
+      <TooltipContent side="bottom" className="max-w-xs space-y-1 text-left text-xs leading-snug">
+        {info}
+      </TooltipContent>
+    </Tooltip>
   );
 }

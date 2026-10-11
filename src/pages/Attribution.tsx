@@ -819,6 +819,12 @@ export default function AttributionPage() {
           label="Profit"
           value={fmtMoney(totals.profit)}
           secondary={{ label: 'Total Sales', value: fmtMoney(totals.netRevenue) }}
+          info={<>
+            <p className="font-semibold">Profit &amp; Total Sales, {periodLabel(period)}</p>
+            <p><b>Profit</b> = each sale × the average gross for the month it sold (Avg Gross button; $4,000 when
+              not set). All {totals.sales} sales, matched to a vendor or not.</p>
+            <p><b>Total Sales</b> = the sum of sale prices.</p>
+          </>}
         />
         <StatCard
           accent="orange"
@@ -826,6 +832,12 @@ export default function AttributionPage() {
           label="Sales"
           value={String(totals.sales)}
           secondary={{ label: 'Leads', value: String(totals.leads) }}
+          info={<>
+            <p className="font-semibold">Sales &amp; Leads, {periodLabel(period)}</p>
+            <p><b>Sales</b>: every sale dated in the period.</p>
+            <p><b>Leads</b>: every lead dated in the period, from all vendors plus leads with no vendor, and the
+              manual Parts/Service lead counts.</p>
+          </>}
         />
         <StatCard
           accent="ember"
@@ -833,6 +845,11 @@ export default function AttributionPage() {
           label="Match rate"
           value={fmtPct(matchRate)}
           secondary={{ label: 'Attributed', value: `${matchedSales}/${sales.length}` }}
+          info={<>
+            <p className="font-semibold">Match rate, {periodLabel(period)}</p>
+            <p>{matchedSales} of {sales.length} sales are credited to a vendor (matched to one of its leads by VIN,
+              stock #, email or phone, or linked by hand). The rest have no vendor credit.</p>
+          </>}
         />
         <StatCard
           accent="rose"
@@ -840,6 +857,23 @@ export default function AttributionPage() {
           label="Overall ROI"
           value={totals.cost > 0 ? `${(totals.roi * 100).toFixed(0)}%` : '—'}
           secondary={{ label: 'Cost', value: fmtMoney(totals.cost) }}
+          info={<>
+            <p className="font-semibold">ROI = (profit from vendor-attributed sales − cost) ÷ cost</p>
+            <p>Profit from the {matchedSales} sales credited to a vendor: {fmtMoney(totals.attributedProfit)}.
+              Sales with no vendor credit aren't included.</p>
+            <p><b>Cost</b>, {periodLabel(period)}: each active vendor's monthly cost for every month of the
+              period; a deactivated vendor only through the month of its last lead.</p>
+            {perf.some(r => r.cost > 0) && (
+              <ul className="pt-1">
+                {perf.filter(r => r.cost > 0).sort((x, y) => y.cost - x.cost).map(r => (
+                  <li key={r.vendorName} className="flex justify-between gap-3 tabular-nums">
+                    <span>{r.vendorName}</span>
+                    <span>{fmtMoney(r.cost)}</span>
+                  </li>
+                ))}
+              </ul>
+            )}
+          </>}
         />
       </div>
 
