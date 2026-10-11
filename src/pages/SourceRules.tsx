@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { supabase } from '@/integrations/supabase/client';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
@@ -19,16 +19,21 @@ import {
   DialogFooter,
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
+import { BulkSourceRulesDialog } from '@/components/BulkSourceRulesDialog';
 
 interface Vendor { id: string; name: string }
+// A rule with no vendor is a SKIP rule: CRM rows with that Lead Provider
+// aren't imported (see src/lib/crmLeads.ts), and Apply rules leaves those
+// leads as they are.
+const SKIP = '__skip__';
 interface Rule {
   id: string;
   pattern: string;
   match_type: string;
   priority: number;
   is_active: boolean;
-  vendor_id: string;
-  vendor?: { name: string };
+  vendor_id: string | null;
+  vendor?: { name: string } | null;
 }
 interface UnmappedSource { source_label: string; count: number }
 
@@ -95,7 +100,7 @@ export default function SourceRulesPage() {
     }
     const { error } = await supabase.from('source_mapping_rules').insert({
       organization_id: activeOrgId,
-      vendor_id: vendorId,
+      vendor_id: vendorId === SKIP ? null : vendorId,
       pattern: pat,
       match_type: matchType,
       priority,
@@ -142,6 +147,8 @@ export default function SourceRulesPage() {
     setOpen(true);
   };
 
+  const existingPatterns = useMemo(() => rules.map(r => r.pattern), [rules]);
+
   if (!activeOrgId) {
     return <p className="text-sm text-muted-foreground">Select a dealership to manage source rules.</p>;
   }
@@ -160,6 +167,12 @@ export default function SourceRulesPage() {
             <Play className="mr-2 h-4 w-4" />
             {running ? 'Running...' : 'Apply Rules Now'}
           </Button>
+          <BulkSourceRulesDialog
+            organizationId={activeOrgId}
+            vendors={vendors}
+            existingPatterns={existingPatterns}
+            onAdded={load}
+          />
           <Dialog open={open} onOpenChange={setOpen}>
             <DialogTrigger asChild><Button>Add Rule</Button></DialogTrigger>
             <DialogContent>
@@ -189,6 +202,7 @@ export default function SourceRulesPage() {
                     <SelectTrigger><SelectValue placeholder="Pick vendor" /></SelectTrigger>
                     <SelectContent>
                       {vendors.map(v => <SelectItem key={v.id} value={v.id}>{v.name}</SelectItem>)}
+                      <SelectItem value={SKIP}>Skip — don't import (CRM upload)</SelectItem>
                     </SelectContent>
                   </Select>
                 </div>
@@ -260,7 +274,7 @@ export default function SourceRulesPage() {
                     <TableCell>{r.priority}</TableCell>
                     <TableCell className="font-mono text-xs">{r.pattern}</TableCell>
                     <TableCell><Badge variant="outline">{r.match_type}</Badge></TableCell>
-                    <TableCell>{r.vendor?.name ?? '—'}</TableCell>
+                    <TableCell>{r.vendor_id ? (r.vendor?.name ?? '—') : <Badge variant="secondary">Skip</Badge>}</TableCell>
                     <TableCell>
                       <Switch
                         checked={r.is_active}

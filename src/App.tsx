@@ -15,6 +15,7 @@ import ResetPasswordPage from '@/pages/ResetPassword';
 import VendorsPage from '@/pages/Vendors';
 import LeadsPage from '@/pages/Leads';
 import UploadPage from '@/pages/Upload';
+import CrmLeadsUploadPage from '@/pages/CrmLeadsUpload';
 import SalesUploadPage from '@/pages/SalesUpload';
 import SalesDedupCleanupPage from '@/pages/SalesDedupCleanup';
 import ImportLogsPage from '@/pages/ImportLogs';
@@ -86,6 +87,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><UploadPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/leads/crm-upload"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><CrmLeadsUploadPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />

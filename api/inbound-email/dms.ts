@@ -53,6 +53,17 @@ import {
 // ERR_MODULE_NOT_FOUND in production even though local dev/typecheck
 // didn't catch it.
 } from '../../src/lib/normalize.js';
+import {
+  crmRowsFromFile,
+  executeCrmPlan,
+  fetchExistingLeads,
+  fetchSavedCrmMapping,
+  fetchSourceRules,
+  isCrmFile,
+  planCrmImport,
+  resolveCrmMapping,
+  type CrmMapping,
+} from '../../src/lib/crmLeads.js';
 
 // ----------------------------------------------------------------------------
 // Postmark inbound payload (subset of fields we actually use)
@@ -555,10 +566,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   const targetTable: 'sales' | 'leads' = isLeadsFile ? 'leads' : 'sales';
   const mapRow = isLeadsFile ? mapLeadRow : mapSaleRow;
 
-  interface OrgResult { rowsImported: number; duplicatesSkipped: number; nonRetailSkipped: number; errors: string[] }
+  // crm: set for a CRM leads file (one with a Lead Provider column) -- see
+  // src/lib/crmLeads.ts. rowsImported there counts only new leads.
+  interface CrmStats { matched: number; enriched: number; skipped: number; unmapped: Map<string, number> }
+  interface OrgResult { rowsImported: number; duplicatesSkipped: number; nonRetailSkipped: number; errors: string[]; crm?: CrmStats }
   const resultsByCredId = new Map<string, OrgResult>();
   for (const c of creds) resultsByCredId.set(c.id, { rowsImported: 0, duplicatesSkipped: 0, nonRetailSkipped: 0, errors: [] });
   const unmatchedLocationErrors: string[] = [];
+  let isCrm = false;
 
   try {
     const buffer = Buffer.from(attachment.Content, 'base64');
@@ -575,8 +590,60 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       return false;
     });
 
+    // A leads file is a CRM export when it fits a dealership's saved CRM
+    // column mapping (set on the CRM Leads Upload page) or has a Lead
+    // Provider column: the vendor comes from each row's provider (Source
+    // Rules), and rows that are already a vendor lead fill that lead's blanks
+    // instead of duplicating it. Same logic as the CRM Leads Upload page.
+    const headers = rawRows.length > 0 ? Object.keys(rawRows[0]) : [];
+    const savedMappingByCredId = new Map<string, CrmMapping | null>();
+    if (isLeadsFile) {
+      for (const c of creds) savedMappingByCredId.set(c.id, await fetchSavedCrmMapping(admin, c.organization_id));
+    }
+    isCrm = isLeadsFile && creds.some(c => isCrmFile(headers, savedMappingByCredId.get(c.id)));
+
     if (allRows.length === 0) {
       resultsByCredId.get(creds[0].id)!.errors.push('Attachment parsed but contained 0 rows');
+    } else if (isCrm) {
+      const rawByCredId = new Map<string, Record<string, unknown>[]>(creds.map(c => [c.id, []]));
+      const knownLocations = creds.map(c => c.location_label).filter(Boolean).join(', ');
+      rawRows.forEach((raw, idx) => {
+        if (!multiLocation) { rawByCredId.get(creds[0].id)!.push(raw); return; }
+        const location = rowLocation(allRows[idx]);
+        const match = matchCredentialByLocation(creds, location);
+        if (!match) {
+          unmatchedLocationErrors.push(
+            `Row ${idx + 2}: location ${location ? `"${location}"` : '(missing)'} did not match any known location (${knownLocations})`,
+          );
+          return;
+        }
+        rawByCredId.get(match.id)!.push(raw);
+      });
+      for (const c of creds) {
+        const rows = rawByCredId.get(c.id)!;
+        if (rows.length === 0) continue;
+        const result = resultsByCredId.get(c.id)!;
+        try {
+          const { mapping } = resolveCrmMapping(headers, savedMappingByCredId.get(c.id));
+          if (!mapping.provider) {
+            result.errors.push('CRM file: no Lead Provider column for this location -- map the file once on the CRM Leads Upload page');
+            continue;
+          }
+          const crmRows = crmRowsFromFile(rows, mapping);
+          const [rules, existing] = await Promise.all([
+            fetchSourceRules(admin, c.organization_id),
+            fetchExistingLeads(admin, c.organization_id, crmRows),
+          ]);
+          const plan = planCrmImport(crmRows, existing, rules);
+          const res = await executeCrmPlan(admin, c.organization_id, plan);
+          result.rowsImported = res.inserted;
+          result.duplicatesSkipped = res.alreadyImported;
+          result.errors.push(...res.errors);
+          result.crm = { matched: res.matched, enriched: res.enriched, skipped: plan.skips.length, unmapped: plan.unmappedProviders };
+        } catch (e) {
+          result.errors.push((e as Error).message);
+        }
+      }
     } else if (normalizedRows.length === 0) {
       // Every row was non-retail -- nothing to insert, not an error.
     } else if (!multiLocation) {
@@ -636,6 +703,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     const result = resultsByCredId.get(c.id)!;
     if (result.rowsImported > 0) {
       if (isLeadsFile) {
+        // New CRM leads can match sales that had no vendor until now.
+        if (isCrm) await admin.rpc('attribute_sale_credits_for_org', { _org_id: c.organization_id });
         await admin
           .from('api_credentials')
           .update({ last_used_at: new Date().toISOString(), lead_count: c.lead_count + result.rowsImported })
@@ -660,7 +729,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
   // be matched to a location -------------------------------------------------
   for (const c of creds) {
     const result = resultsByCredId.get(c.id)!;
-    if (result.rowsImported === 0 && result.duplicatesSkipped === 0 && result.nonRetailSkipped === 0 && result.errors.length === 0) continue;
+    if (result.rowsImported === 0 && result.duplicatesSkipped === 0 && result.nonRetailSkipped === 0 && !result.crm && result.errors.length === 0) continue;
     const status: 'success' | 'partial' | 'failed' =
       result.errors.length > 0 && result.rowsImported === 0 ? 'failed' : result.errors.length > 0 ? 'partial' : 'success';
     await admin.from('dms_import_logs').insert({
@@ -710,6 +779,20 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           return `  - ${c.location_label ?? c.organization_id}: ${r.rowsImported} imported, ${r.duplicatesSkipped} duplicates, ${r.nonRetailSkipped} non-retail skipped, ${r.errors.length} errors`;
         })
       : [];
+    const crmResults = [...resultsByCredId.values()].map(r => r.crm).filter((x): x is CrmStats => !!x);
+    const crmUnmapped = new Map<string, number>();
+    for (const r of crmResults) for (const [p, n] of r.unmapped) crmUnmapped.set(p, (crmUnmapped.get(p) ?? 0) + n);
+    const crmLines = isCrm
+      ? [
+          'CRM leads file (vendor taken from Lead Provider):',
+          `  - New leads: ${totalRowsImported}`,
+          `  - Already a lead (matched a vendor lead dated inside the file's date range): ${crmResults.reduce((s, r) => s + r.matched, 0)}, of which ${crmResults.reduce((s, r) => s + r.enriched, 0)} had blank fields filled`,
+          `  - Skipped (skip rule such as Service, no identifying info, or repeated in file): ${crmResults.reduce((s, r) => s + r.skipped, 0)}`,
+          ...(crmUnmapped.size > 0
+            ? [`  - Lead Provider values with no Source Rule, imported as Unassigned: ${[...crmUnmapped].map(([p, n]) => `${p} (${n})`).join(', ')}`]
+            : []),
+        ]
+      : [];
     const html = plainTextEmailHtml([
       `Import received from: ${fromHeader}`,
       `File: ${attachment.Name}`,
@@ -717,6 +800,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       `Rows imported: ${totalRowsImported}`,
       `Duplicates skipped: ${totalDuplicatesSkipped}`,
       ...(isLeadsFile ? [] : [`Non-retail skipped (sale type not RET, e.g. WHLSE): ${totalNonRetailSkipped}`]),
+      ...crmLines,
       `Errors: ${totalErrors.length}${totalErrors.length ? '\n  - ' + totalErrors.join('\n  - ') : ''}`,
       '',
       `View dashboard: ${dashboardUrl}`,

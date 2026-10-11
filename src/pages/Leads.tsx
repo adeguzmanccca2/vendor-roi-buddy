@@ -467,6 +467,9 @@ export default function LeadsPage() {
           <Button variant="outline" asChild>
             <Link to="/upload"><Upload className="mr-1 h-4 w-4" /> Upload leads</Link>
           </Button>
+          <Button variant="outline" asChild>
+            <Link to="/leads/crm-upload"><Upload className="mr-1 h-4 w-4" /> Upload CRM leads</Link>
+          </Button>
           <Button variant="outline" onClick={() => {
             const vMap = new Map(vendors.map(v => [v.id, v.name]));
             downloadCsv(`leads-${new Date().toISOString().slice(0, 10)}.csv`, leads.map(l => ({
