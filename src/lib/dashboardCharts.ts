@@ -1,4 +1,5 @@
 import { avgGrossForSale, saleMonthKey } from './avgGross';
+import { costsInMonth, NEVER } from './vendorCost';
 
 
 export interface VendorComparisonLead {
@@ -120,6 +121,8 @@ export interface VendorRoiTrendVendor {
   id: string;
   name: string;
   monthly_cost: number | null;
+  // Last month the cost counts (see vendorCost.ts); null/absent = no end.
+  cost_until?: string | null;
 }
 
 export interface VendorRoiTrendPoint {
@@ -161,7 +164,7 @@ export function buildVendorRoiTrend({
     buckets[key] = { month };
   }
 
-  const vendorsWithCost = vendors.filter(v => Number(v.monthly_cost ?? 0) > 0);
+  const vendorsWithCost = vendors.filter(v => Number(v.monthly_cost ?? 0) > 0 && v.cost_until !== NEVER);
   const series: VendorComparisonSeries[] = vendorsWithCost.map((vendor, index) => ({
     key: `vendor:${vendor.id}`,
     label: vendor.name,
@@ -194,6 +197,8 @@ export function buildVendorRoiTrend({
     const point = buckets[key];
     const byVendor = revenueByBucketVendor.get(key);
     for (const vendor of vendorsWithCost) {
+      // No cost this month (deactivated, leads stopped): no ROI point -- a gap.
+      if (!costsInMonth(vendor.cost_until, key)) continue;
       const cost = Number(vendor.monthly_cost ?? 0);
       const revenue = byVendor?.get(vendor.id) ?? 0;
       point[`vendor:${vendor.id}`] = Math.round(((revenue - cost) / cost) * 100);
@@ -226,7 +231,8 @@ export interface RoasRoiTrendPoint {
 //   ROI  = (profit - cost) / cost,  profit = avg gross x sales
 // Revenue counts only sales credited to one of the given vendors (like the
 // Overall ROI card -- Unassigned sales earned nothing for any vendor), cost
-// is the summed monthly_cost of those vendors, and avg gross is the month's
+// is the summed monthly_cost of the vendors whose cost counts that month
+// (cost_until, see vendorCost.ts), and avg gross is the month's
 // stored value or DEFAULT_AVG_GROSS. Months are UTC, matching the
 // Attribution period filter and the avg gross months.
 export function buildRoasRoiTrend({
@@ -238,13 +244,15 @@ export function buildRoasRoiTrend({
   now = new Date(),
 }: {
   sales: RoasRoiTrendSale[];
-  vendors: { id: string; monthly_cost: number | null }[];
+  vendors: { id: string; monthly_cost: number | null; cost_until?: string | null }[];
   creditsBySaleId: Map<string, string[]>;
   avgGrossByMonth: Record<string, number>;
   months?: number;
   now?: Date;
 }): RoasRoiTrendPoint[] {
-  const monthlyCost = vendors.reduce((a, v) => a + Number(v.monthly_cost ?? 0), 0);
+  const costIn = (key: string) => vendors
+    .filter(v => costsInMonth(v.cost_until, key))
+    .reduce((a, v) => a + Number(v.monthly_cost ?? 0), 0);
 
   const keys: string[] = [];
   const agg: Record<string, { net: number; profit: number; sales: number }> = {};
@@ -267,6 +275,7 @@ export function buildRoasRoiTrend({
 
   return keys.map(key => {
     const a = agg[key];
+    const monthlyCost = costIn(key);
     const usable = monthlyCost > 0 && a.sales > 0;
     return {
       month: `${key.slice(5)}/${key.slice(2, 4)}`,

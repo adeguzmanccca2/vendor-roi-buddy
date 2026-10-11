@@ -31,9 +31,11 @@ import { useAvgGrossByMonth } from '@/hooks/useAvgGrossByMonth';
 import { resolveLeadCount, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 import { formatCompactMoney } from '@/lib/utils';
 import { avgGrossForSale } from '@/lib/avgGross';
+import { costUntil, costsInMonth, fetchLastLeadDates, monthKeysBetween } from '@/lib/vendorCost';
 import { AvgGrossDialog } from '@/components/AvgGrossDialog';
 
-interface Vendor { id: string; name: string; monthly_cost: number | null }
+// cost_until: last month the cost counts (null = no end) -- see vendorCost.ts.
+interface Vendor { id: string; name: string; monthly_cost: number | null; is_active: boolean; cost_until?: string | null }
 interface SaleRow {
   id: string; vendor_id: string | null; lead_id: string | null;
   customer_full_name: string | null;
@@ -358,7 +360,7 @@ export default function AttributionPage() {
       const { start: sinceIso, end: untilIso } = periodRange(period);
       const trendSinceIso = new Date(new Date().getFullYear(), new Date().getMonth() - 11, 1).toISOString();
 
-      const vQ = supabase.from('vendors').select('id, name, monthly_cost')
+      const vQ = supabase.from('vendors').select('id, name, monthly_cost, is_active')
         .eq('organization_id', activeOrgId).order('name');
       let lQ = supabase.from('leads').select('id, vendor_id, lead_date, created_at, customer_full_name, customer_email, customer_phone, vehicle_year, vehicle_make, vehicle_model, vin, stock_number, source_label, lead_status')
         .eq('organization_id', activeOrgId)
@@ -424,7 +426,14 @@ export default function AttributionPage() {
       }
       setSaleCredits(creditMap);
 
-      setVendors((vData ?? []) as Vendor[]);
+      // A deactivated vendor's cost counts only through the month of its last
+      // lead (vendorCost.ts) -- in the Cost card, Overall ROI and the ROI
+      // charts. Its leads and credited sales always count.
+      const vendorRows = (vData ?? []) as Vendor[];
+      const lastLeadDates = await fetchLastLeadDates(
+        supabase, activeOrgId, vendorRows.filter(v => v.is_active === false).map(v => v.id),
+      );
+      setVendors(vendorRows.map(v => ({ ...v, cost_until: costUntil(v.is_active, lastLeadDates[v.id]) })));
       const leadRows = (lData ?? []) as LeadRow[];
       setLeads(leadRows);
       const counts: Record<string, number> = {};
@@ -502,6 +511,11 @@ export default function AttributionPage() {
   }, [activeOrgId]);
 
   const months = periodMonths(period);
+  // The period's UTC months, for vendors whose cost stops partway.
+  const periodMonthKeys = useMemo(() => {
+    const { start, end } = periodRange(period);
+    return start && end ? monthKeysBetween(new Date(start), new Date(end)) : [];
+  }, [period]);
 
   const perf: VendorPerf[] = useMemo(() => {
     const knownVendorIds = new Set(vendors.map(v => v.id));
@@ -536,14 +550,21 @@ export default function AttributionPage() {
       credit(null, s, 1);
     }
 
-    const rows: VendorPerf[] = vendors.map(v => {
+    const costMonths = (v: Vendor) => (periodMonthKeys.length > 0
+      ? periodMonthKeys.filter(k => costsInMonth(v.cost_until, k)).length
+      : (v.cost_until ? 0 : months));
+    // Deactivated vendors only get a row when they cost, or have leads or
+    // sales, in this period.
+    const rows: VendorPerf[] = vendors.filter(v => v.is_active !== false || costMonths(v) > 0
+      || byVendor.has(v.id) || resolveLeadCount({ vendorId: v.id, manualLeadCounts, fallbackLeadCount: leadCounts[v.id] ?? 0 }) > 0,
+    ).map(v => {
       const agg = byVendor.get(v.id) ?? { revenue: 0, profit: 0, sales: 0, credited: 0, shared: 0 };
       const leads = resolveLeadCount({
         vendorId: v.id,
         manualLeadCounts,
         fallbackLeadCount: leadCounts[v.id] ?? 0,
       });
-      const cost = Number(v.monthly_cost ?? 0) * months;
+      const cost = Number(v.monthly_cost ?? 0) * costMonths(v);
       const cpl = leads > 0 ? cost / leads : 0;
       const cpa = agg.sales > 0 ? cost / agg.sales : 0;
       const closeRate = leads > 0 ? agg.sales / leads : 0;
@@ -572,7 +593,7 @@ export default function AttributionPage() {
       });
     }
     return rows.sort((a, b) => b.profit - a.profit);
-  }, [vendors, sales, saleCredits, leadCounts, unattributedLeads, months, manualLeadCounts, avgGrossByMonth]);
+  }, [vendors, sales, saleCredits, leadCounts, unattributedLeads, months, periodMonthKeys, manualLeadCounts, avgGrossByMonth]);
 
   // Profit = avg gross per vehicle for the month each sale closed x sales;
   // total sales (net) is kept alongside for the card's secondary line.

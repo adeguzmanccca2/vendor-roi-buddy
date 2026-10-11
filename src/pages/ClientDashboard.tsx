@@ -20,14 +20,16 @@ import { RevenueTrendChart } from '@/components/RevenueTrendChart';
 import { VendorLeadsChart } from '@/components/VendorLeadsChart';
 import { useAvgGrossByMonth } from '@/hooks/useAvgGrossByMonth';
 import { avgGrossForSale } from '@/lib/avgGross';
+import { costUntil, fetchLastLeadDates, NEVER } from '@/lib/vendorCost';
 import { formatCompactMoney } from '@/lib/utils';
 import { resolveLeadTotal, type ManualLeadCountBreakdown } from '@/lib/manualLeadCounts';
 
 interface Org { id: string; name: string; slug: string; status: string }
 interface SaleLite { id: string; sale_date: string | null; sale_price: number | null; vendor_id: string | null; lead_id: string | null }
 interface LeadLite { lead_date: string | null; vendor_id: string | null }
-interface VendorLite { id: string; name: string; monthly_cost: number | null }
-interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null }
+// cost_until: last month the vendor's cost counts (null = no end) -- see vendorCost.ts.
+interface VendorLite { id: string; name: string; monthly_cost: number | null; is_active: boolean; cost_until: string | null }
+interface VendorCost { id: string; monthly_cost: number | null; firstLeadDate: string | null; cost_until: string | null }
 
 const fmtMoney = (n: number) =>
   n.toLocaleString('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
@@ -119,7 +121,9 @@ export default function ClientDashboard() {
         .gte('sale_date', ytdStart)
         .lte('sale_date', ytdEnd),
       // Vendor costs — fetch id + monthly_cost so we can look up first lead date per vendor
-      supabase.from('vendors').select('id, name, monthly_cost').eq('organization_id', orgId).eq('is_active', true),
+      // All vendors, deactivated too: their sales still count, and their cost
+      // counts through the month of their last lead (vendorCost.ts).
+      supabase.from('vendors').select('id, name, monthly_cost, is_active').eq('organization_id', orgId),
       // First lead date per vendor — used to calculate months active
       supabase.from('leads').select('vendor_id, lead_date')
         .eq('organization_id', orgId)
@@ -145,7 +149,11 @@ export default function ClientDashboard() {
       // Untyped client: sale_attributions is missing from the stale types.ts.
       (supabase as unknown as SupabaseClient).from('sale_attributions').select('sale_id, vendor_id')
         .eq('organization_id', orgId),
-    ]).then(([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes, creditsRes]) => {
+    ]).then(async ([orgRes, leadsRes, salesRes, vendorsRes, allLeadsRes, trendSalesRes, trendLeadsRes, leadsExportRes, creditsRes]) => {
+      const lastLeadDates = await fetchLastLeadDates(
+        supabase, orgId, (vendorsRes.data ?? []).filter((v: any) => v.is_active === false).map((v: any) => v.id),
+      );
+      const untilOf = (v: any) => costUntil(v.is_active, lastLeadDates[v.id]);
       setOrg(orgRes.data ?? null);
 
       // Build a map of vendor_id → earliest lead_date
@@ -160,6 +168,7 @@ export default function ClientDashboard() {
         id: v.id,
         monthly_cost: v.monthly_cost,
         firstLeadDate: firstLeadByVendor[v.id] ?? null,
+        cost_until: untilOf(v),
       }));
 
       const vendorIds = (vendorsRes.data ?? []).map((v: any) => v.id);
@@ -187,7 +196,7 @@ export default function ClientDashboard() {
       setSaleCredits(credits);
       setTrendSales((trendSalesRes.data ?? []) as SaleLite[]);
       setTrendLeads((trendLeadsRes.data ?? []) as LeadLite[]);
-      setVendors((vendorsRes.data ?? []) as VendorLite[]);
+      setVendors((vendorsRes.data ?? []).map((v: any) => ({ ...v, cost_until: untilOf(v) })) as VendorLite[]);
       setExportRows((leadsExportRes.data ?? []) as any[]);
       setLoading(false);
     });
@@ -229,19 +238,30 @@ export default function ClientDashboard() {
 
       // No leads yet — can't determine start date, exclude from cost
       if (!v.firstLeadDate) return total;
+      if (v.cost_until === NEVER) return total;
 
       const firstLead = new Date(v.firstLeadDate);
 
+      // Deactivated vendor: cost stops after the month of its last lead.
+      const until = v.cost_until;
+      const vendorEnd = until
+        ? new Date(Date.UTC(Number(until.slice(0, 4)), Number(until.slice(5, 7)), 0, 23, 59, 59))
+        : periodEnd;
+      const end = vendorEnd < periodEnd ? vendorEnd : periodEnd;
+
       // Vendor's first lead is after the selected period — not active this period
-      if (firstLead > periodEnd) return total;
+      if (firstLead > end) return total;
 
       // Vendor start for this period = later of (first lead date, Jan 1 of selected year)
       const vendorStart = firstLead < yearStart ? yearStart : firstLead;
+      // Cost ended before this year started.
+      if (end < vendorStart) return total;
 
-      // Months active = difference in months between vendorStart and periodEnd
+      // Months active = difference in months between vendorStart and the
+      // period end (or the vendor's cost end, if earlier).
       // Using ceil so a partial month counts as a full month
       const monthsActive = Math.ceil(
-        (periodEnd.getTime() - vendorStart.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
+        (end.getTime() - vendorStart.getTime()) / (1000 * 60 * 60 * 24 * 30.44)
       );
 
       return total + monthlyCost * Math.max(monthsActive, 1);

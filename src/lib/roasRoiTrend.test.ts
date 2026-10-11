@@ -84,3 +84,25 @@ describe('buildRevenueTrend', () => {
     expect(data[0].vehicles).toBe(0);
   });
 });
+
+describe('buildRoasRoiTrend with a deactivated vendor', () => {
+  it("drops a vendor's cost after the month of its last lead, but keeps its sales", () => {
+    const now = new Date(Date.UTC(2026, 8, 15)); // Sep 2026
+    const data = buildRoasRoiTrend({
+      sales: [
+        { id: 'a', sale_date: '2026-08-10T12:00:00+00:00', sale_price: 0 },
+        { id: 'b', sale_date: '2026-09-10T12:00:00+00:00', sale_price: 0 },
+      ],
+      vendors: [
+        { id: 'v1', monthly_cost: 1000 },
+        { id: 'lx', monthly_cost: 3000, cost_until: '2026-08' }, // last lead in August
+      ],
+      creditsBySaleId: new Map([['a', ['v1']], ['b', ['lx']]]),
+      avgGrossByMonth: {},
+      now,
+    });
+    // Aug: cost 1000 + 3000, profit 4000 -> 0%. Sep: cost 1000 only, Lotlinx's late sale still counts -> 300%.
+    expect(data[data.length - 2].roi).toBe(0);
+    expect(data[data.length - 1].roi).toBe(300);
+  });
+});
