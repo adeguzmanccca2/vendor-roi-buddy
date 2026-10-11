@@ -17,13 +17,17 @@ describe('buildVendorComparisonData', () => {
         { lead_date: currentMonthDate.toISOString().slice(0, 10), vendor_id: 'v1' },
       ],
       sales: [
-        { sale_date: previousMonthDate.toISOString().slice(0, 10), vendor_id: 'v1', lead_id: null },
-        { sale_date: currentMonthDate.toISOString().slice(0, 10), vendor_id: null, lead_id: 'lead-1' },
+        { id: 's1', sale_date: previousMonthDate.toISOString().slice(0, 10) },
+        { id: 's2', sale_date: currentMonthDate.toISOString().slice(0, 10) },
+        // No credit, and a credit only to a vendor not in the list: not attributed.
+        { id: 's3', sale_date: currentMonthDate.toISOString().slice(0, 10) },
+        { id: 's4', sale_date: currentMonthDate.toISOString().slice(0, 10) },
       ],
       vendors: [
         { id: 'v1', name: 'Acme' },
         { id: 'v2', name: 'Best Auto' },
       ],
+      creditsBySaleId: new Map([['s1', ['v1']], ['s2', ['v1', 'v2']], ['s4', ['gone']]]),
       months: 2,
     });
 

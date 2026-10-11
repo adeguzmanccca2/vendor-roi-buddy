@@ -7,9 +7,8 @@ export interface VendorComparisonLead {
 }
 
 export interface VendorComparisonSale {
+  id: string;
   sale_date?: string | null;
-  vendor_id?: string | null;
-  lead_id?: string | null;
 }
 
 export interface VendorComparisonVendor {
@@ -35,16 +34,22 @@ const palette = [
   'hsl(var(--chart-5))', 'hsl(var(--chart-6))', 'hsl(var(--chart-7))', 'hsl(var(--chart-8))',
 ];
 
+// "Attributed sales" = sales credited to one of `vendors` in
+// sale_attributions -- the same credits the Attribution page counts. (It
+// used to read the legacy sales.vendor_id / lead_id columns, which the
+// matcher stopped writing in 20260911000005, so recent months showed 0.)
 export function buildVendorComparisonData({
   leads,
   sales,
   vendors,
+  creditsBySaleId,
   months = 12,
   now = new Date(),
 }: {
   leads: VendorComparisonLead[];
   sales: VendorComparisonSale[];
   vendors: VendorComparisonVendor[];
+  creditsBySaleId: Map<string, string[]>;
   months?: number;
   // Last month of the window (any day in it); the window runs `months` back.
   now?: Date;
@@ -88,11 +93,12 @@ export function buildVendorComparisonData({
     }
   }
 
+  const vendorIds = new Set(vendors.map(v => v.id));
   for (const sale of sales) {
-    if (!sale.sale_date || (!sale.vendor_id && !sale.lead_id)) continue;
-    const d = new Date(sale.sale_date);
-    const bucketKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
-    if (bucketKey in buckets) {
+    if (!(creditsBySaleId.get(sale.id) ?? []).some(id => vendorIds.has(id))) continue;
+    // UTC month, like the Attribution page's period filter.
+    const bucketKey = saleMonthKey(sale.sale_date);
+    if (bucketKey && bucketKey in buckets) {
       const point = buckets[bucketKey] as VendorComparisonPoint;
       point.attributedSales = (Number(point.attributedSales ?? 0) + 1) as number;
     }

@@ -275,9 +275,10 @@ export default function ClientDashboard() {
     leads: trendLeads,
     sales: trendSales,
     vendors,
+    creditsBySaleId: saleCredits,
     months: chartMonths,
     now: new Date(chartEndMs),
-  }), [trendLeads, trendSales, vendors, chartMonths, chartEndMs]);
+  }), [trendLeads, trendSales, vendors, saleCredits, chartMonths, chartEndMs]);
 
   const exportLeads = () =>
     downloadCsv(`leads-ytd-${selectedYear}-${new Date().toISOString().slice(0, 10)}.csv`, exportRows);
