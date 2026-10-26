@@ -52,7 +52,8 @@ describe('scoreLikelyToBuy', () => {
     expect(prospects).toHaveLength(1);
     expect(prospects[0].tier).toBe('hot');
     expect(prospects[0].interestedIn).toBe('Toyota Highlander');
-    expect(prospects[0].reasons[0]).toMatch(/New lead on 10\/20/);
+    expect(prospects[0].reasons[0]).toEqual({ text: 'New lead on 10/20', points: 60 });
+    expect(prospects[0].score).toBe(prospects[0].reasons.reduce((s, r) => s + r.points, 0));
   });
 
   it('ignores the lead that produced the sale', () => {
@@ -100,7 +101,7 @@ describe('scoreLikelyToBuy', () => {
     );
     expect(prospects).toHaveLength(1);
     expect(prospects[0].purchases).toBe(2);
-    expect(prospects[0].reasons).toContain('Repeat buyer (2 purchases)');
+    expect(prospects[0].reasons.map(r => r.text)).toContain('Repeat buyer (2 purchases)');
   });
 
   it('flags several leads across vendors', () => {
@@ -113,8 +114,8 @@ describe('scoreLikelyToBuy', () => {
       NOW,
     );
     expect(prospects[0].recentLeadVendorIds.sort()).toEqual(['v1', 'v2']);
-    expect(prospects[0].reasons).toContain('2 leads in the last 30 days');
-    expect(prospects[0].reasons).toContain('Shopping on 2 lead sources');
+    expect(prospects[0].reasons.map(r => r.text)).toContain('2 leads in the last 30 days');
+    expect(prospects[0].reasons.map(r => r.text)).toContain('Shopping on 2 lead sources');
   });
 
   it('counts returning-customer leads per vendor', () => {

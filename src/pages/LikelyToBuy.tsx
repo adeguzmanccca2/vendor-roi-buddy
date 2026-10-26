@@ -8,15 +8,21 @@ import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Badge } from '@/components/ui/badge';
 import { StatCard } from '@/components/StatCard';
-import { Download, Flame, Thermometer, Eye, Users, Search } from 'lucide-react';
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { Download, Flame, Thermometer, Eye, Users, Search, ChevronDown, HelpCircle } from 'lucide-react';
 import { downloadCsv } from '@/lib/exportCsv';
-import { scoreLikelyToBuy, type LtbLead, type LtbResult, type LtbSale, type Tier } from '@/lib/likelyToBuy';
+import {
+  POINTS, RECENT_LEAD_DAYS, WARM_MIN, WATCH_MIN,
+  scoreLikelyToBuy, type LtbLead, type LtbResult, type LtbSale, type Tier,
+} from '@/lib/likelyToBuy';
 import { toast } from 'sonner';
 
 const PAGE_SIZE = 1000;
 const SHOW_STEP = 200;
 const ALL = '__all__';
 const LOOKBACK_KEY = 'vroi.ltbLookback';
+const HOW_OPEN_KEY = 'vroi.ltbHowOpen';
 
 const LOOKBACKS = [
   { value: '6', label: 'Last 6 months' },
@@ -34,6 +40,29 @@ const TIER_CLASS: Record<Tier, string> = {
   warm: 'border-transparent bg-orange-500 text-white hover:bg-orange-500',
   watch: 'border-transparent bg-amber-200 text-amber-900 hover:bg-amber-200 dark:bg-amber-900/60 dark:text-amber-100',
 };
+
+/** What each tier means, in the dealer's terms. Shown on the badge and in the scoring guide. */
+const TIER_MEANING: Record<Tier, string> = {
+  hot: `Bought from you before AND sent a new lead in the last ${RECENT_LEAD_DAYS} days. They are shopping right now — call first.`,
+  warm: `No new lead yet, but ${WARM_MIN}+ points: usually due for a trade-in, often with other signals on top. Worth a call this month.`,
+  watch: `${WATCH_MIN}–${WARM_MIN - 1} points: getting close to trade-in time or one smaller signal. Keep in touch; not urgent yet.`,
+};
+
+/** The scoring guide's signal table, kept next to the POINTS it describes. */
+const SIGNALS: { points: number; signal: string; detail: string }[] = [
+  { points: POINTS.recentLead, signal: 'New lead from a past buyer', detail: `They submitted a lead through any vendor in the last ${RECENT_LEAD_DAYS} days. Always makes them Hot.` },
+  { points: POINTS.multipleLeads, signal: 'Several leads in 30 days', detail: '2 or more leads in the last 30 days — actively shopping.' },
+  { points: POINTS.multipleVendors, signal: 'Shopping on several lead sources', detail: 'Leads came through 2 or more vendors — likely comparing dealers.' },
+  { points: POINTS.timingDue, signal: 'Due for a trade-in', detail: 'Used buyers 18+ months after purchase; new buyers 36+ months.' },
+  { points: POINTS.timingApproaching, signal: 'Nearing trade-in time', detail: 'Used buyers 12–18 months after purchase; new buyers 24–36 months.' },
+  { points: POINTS.repeatBuyer, signal: 'Repeat buyer', detail: 'Bought from you 2 or more times (latest purchase at least 6 months ago).' },
+  { points: POINTS.olderLead, signal: 'Sent a lead a while back', detail: `Submitted a lead after buying, but more than ${RECENT_LEAD_DAYS} days ago.` },
+  { points: POINTS.birthday, signal: 'Birthday this month', detail: 'Only when the sale record has a birthday and they bought 12+ months ago.' },
+];
+
+function readHowOpen(): boolean {
+  try { return localStorage.getItem(HOW_OPEN_KEY) !== 'closed'; } catch { return true; }
+}
 
 function readLookback(): string {
   try { return localStorage.getItem(LOOKBACK_KEY) ?? '24'; } catch { return '24'; }
@@ -72,6 +101,11 @@ export default function LikelyToBuyPage() {
   const [salespersonFilter, setSalespersonFilter] = useState<string>(ALL);
   const [search, setSearch] = useState('');
   const [showCount, setShowCount] = useState(SHOW_STEP);
+  const [howOpen, setHowOpen] = useState(readHowOpen);
+
+  useEffect(() => {
+    try { localStorage.setItem(HOW_OPEN_KEY, howOpen ? 'open' : 'closed'); } catch { /* per-viewer convenience only */ }
+  }, [howOpen]);
 
   useEffect(() => {
     try { localStorage.setItem(LOOKBACK_KEY, lookback); } catch { /* per-viewer convenience only */ }
@@ -162,7 +196,7 @@ export default function LikelyToBuyPage() {
         'Latest lead': fmtDate(p.recentLeadDate),
         'Lead sources': p.recentLeadVendorIds.map(vendorLabel).join('; '),
         'Interested in': p.interestedIn ?? '',
-        Why: p.reasons.join(' · '),
+        Why: p.reasons.map(r => `+${r.points} ${r.text}`).join(' · '),
       })),
     );
   }
@@ -191,14 +225,70 @@ export default function LikelyToBuyPage() {
 
       <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
         <StatCard accent="rose" icon={Flame} label="Hot" value={String(counts.hot)}
-          info={<p>Past buyers who submitted a new lead in the last 90 days. Call these first.</p>} />
+          info={<p>{TIER_MEANING.hot}</p>} />
         <StatCard accent="ember" icon={Thermometer} label="Warm" value={String(counts.warm)}
-          info={<p>Due for a trade-in (used buyers at 18+ months, new buyers at 36+ months), or several smaller signals adding up.</p>} />
+          info={<p>{TIER_MEANING.warm}</p>} />
         <StatCard accent="amber" icon={Eye} label="Watch" value={String(counts.watch)}
-          info={<p>Approaching trade-in time, repeat buyers, a lead sent a while back, or a birthday this month.</p>} />
+          info={<p>{TIER_MEANING.watch}</p>} />
         <StatCard icon={Users} label="Sales analyzed" value={salesCount.toLocaleString()}
           info={<p>Sales in the {lookbackLabel}. Customers are matched by phone and email, never by name alone. Longer history finds more trade-in candidates.</p>} />
       </div>
+
+      <Collapsible open={howOpen} onOpenChange={setHowOpen}>
+        <Card>
+          <CollapsibleTrigger asChild>
+            <button type="button" className="flex w-full items-center justify-between gap-2 p-4 text-left">
+              <span className="flex items-center gap-2 text-base font-semibold text-foreground">
+                <HelpCircle className="h-4 w-4 text-muted-foreground" />How scoring works
+              </span>
+              <ChevronDown className={`h-4 w-4 text-muted-foreground transition-transform ${howOpen ? 'rotate-180' : ''}`} />
+            </button>
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <CardContent className="space-y-4 pt-0 text-sm">
+              <p className="text-muted-foreground">
+                We look at every past customer in your sales file and check two things: <strong className="text-foreground">how long
+                since they bought</strong>, and <strong className="text-foreground">whether they've sent you a new lead</strong> through
+                any vendor since then. Each signal adds points; the points decide the tier. Customers are matched to leads by phone or
+                email only — never by name alone — so a different person with the same name won't show up as Hot.
+              </p>
+              <div className="grid gap-3 md:grid-cols-3">
+                {(['hot', 'warm', 'watch'] as Tier[]).map(t => (
+                  <div key={t} className="rounded-md border border-border p-3">
+                    <Badge className={TIER_CLASS[t]}>{TIER_LABEL[t]}</Badge>
+                    <p className="mt-2 text-muted-foreground">{TIER_MEANING[t]}</p>
+                  </div>
+                ))}
+              </div>
+              <div className="overflow-x-auto">
+                <Table>
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead className="w-20 text-right">Points</TableHead>
+                      <TableHead>Signal</TableHead>
+                      <TableHead>When it counts</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {SIGNALS.map(sig => (
+                      <TableRow key={sig.signal}>
+                        <TableCell className="text-right font-medium">+{sig.points}</TableCell>
+                        <TableCell className="font-medium">{sig.signal}</TableCell>
+                        <TableCell className="text-muted-foreground">{sig.detail}</TableCell>
+                      </TableRow>
+                    ))}
+                  </TableBody>
+                </Table>
+              </div>
+              <p className="text-xs text-muted-foreground">
+                New vs. used comes from the sale's New/Used column when it has one; otherwise a vehicle two or more model years old
+                at the time of sale counts as used. Leads within 30 days after a purchase are ignored — those are the leads that
+                produced the sale, not a new shopping trip.
+              </p>
+            </CardContent>
+          </CollapsibleContent>
+        </Card>
+      </Collapsible>
 
       <Card>
         <CardHeader className="space-y-3">
@@ -259,7 +349,15 @@ export default function LikelyToBuyPage() {
                   <TableBody>
                     {filtered.slice(0, showCount).map(p => (
                       <TableRow key={p.key}>
-                        <TableCell><Badge className={TIER_CLASS[p.tier]}>{TIER_LABEL[p.tier]}</Badge></TableCell>
+                        <TableCell>
+                          <Tooltip>
+                            <TooltipTrigger asChild>
+                              <Badge tabIndex={0} className={`cursor-help ${TIER_CLASS[p.tier]}`}>{TIER_LABEL[p.tier]}</Badge>
+                            </TooltipTrigger>
+                            <TooltipContent side="right" className="max-w-xs text-xs">{TIER_MEANING[p.tier]}</TooltipContent>
+                          </Tooltip>
+                          <div className="mt-1 text-xs text-muted-foreground">{p.score} pts</div>
+                        </TableCell>
                         <TableCell>
                           <div className="font-medium text-foreground">{p.name}</div>
                           <div className="text-xs text-muted-foreground">{[p.phone, p.email].filter(Boolean).join(' · ')}</div>
@@ -271,7 +369,14 @@ export default function LikelyToBuyPage() {
                           </div>
                         </TableCell>
                         <TableCell className="max-w-md">
-                          <div className="text-sm text-foreground">{p.reasons.join(' · ')}</div>
+                          <ul className="space-y-0.5 text-sm text-foreground">
+                            {p.reasons.map(r => (
+                              <li key={r.text} className="flex gap-2">
+                                <span className="w-8 shrink-0 text-right font-medium text-muted-foreground">+{r.points}</span>
+                                <span>{r.text}</span>
+                              </li>
+                            ))}
+                          </ul>
                           {(p.recentLeadVendorIds.length > 0 || p.interestedIn) && (
                             <div className="text-xs text-muted-foreground">
                               {[

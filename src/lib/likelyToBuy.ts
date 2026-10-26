@@ -48,6 +48,12 @@ export interface LtbLead {
 export type Tier = 'hot' | 'warm' | 'watch';
 export type Condition = 'new' | 'used' | null;
 
+/** One signal a customer matched, with the points it added to their score. */
+export interface Reason {
+  text: string;
+  points: number;
+}
+
 export interface Prospect {
   key: string;
   name: string;
@@ -55,7 +61,7 @@ export interface Prospect {
   email: string | null;
   tier: Tier;
   score: number;
-  reasons: string[];
+  reasons: Reason[];
   lastSaleDate: string;
   lastVehicle: string;
   condition: Condition;
@@ -83,7 +89,7 @@ const MONTH_DAYS = 30.4375;
 /** A lead this soon after a purchase is post-sale noise, not a new shopping trip. */
 const POST_SALE_GRACE_DAYS = 30;
 /** A lead this recent means the customer is shopping right now. */
-const RECENT_LEAD_DAYS = 90;
+export const RECENT_LEAD_DAYS = 90;
 
 // Points per signal. Tiers: any recent lead = Hot; otherwise >= 30 Warm, >= 10 Watch.
 export const POINTS = {
@@ -96,8 +102,8 @@ export const POINTS = {
   repeatBuyer: 20,
   birthday: 10,
 } as const;
-const WARM_MIN = 30;
-const WATCH_MIN = 10;
+export const WARM_MIN = 30;
+export const WATCH_MIN = 10;
 
 function toTime(s: string | null | undefined): number | null {
   if (!s) return null;
@@ -245,8 +251,8 @@ export function scoreLikelyToBuy(sales: LtbSale[], leads: LtbLead[], now: Date =
     const lastVehicle = vehicleLabel(last);
     const vehicleText = lastVehicle ? `${condition ? condition + ' ' : ''}${lastVehicle}` : condition ? `a ${condition} vehicle` : 'a vehicle';
 
-    let score = 0;
-    const reasons: string[] = [];
+    const reasons: Reason[] = [];
+    const add = (points: number, text: string) => { reasons.push({ text, points }); };
 
     // Shopping since their last purchase (leads before it are the leads that
     // produced that sale, so they don't count).
@@ -259,46 +265,39 @@ export function scoreLikelyToBuy(sales: LtbSale[], leads: LtbLead[], now: Date =
     let interestedIn: string | null = null;
 
     if (recent.length) {
-      score += POINTS.recentLead;
-      reasons.push(`New lead on ${shortDate(recent[0].t)}`);
+      add(POINTS.recentLead, `New lead on ${shortDate(recent[0].t)}`);
       interestedIn = recent.map(x => vehicleLabel(x.l)).find(Boolean) ?? null;
       const last30 = recent.filter(x => x.t >= nowT - 30 * DAY).length;
       if (last30 >= 2) {
-        score += POINTS.multipleLeads;
-        reasons.push(`${last30} leads in the last 30 days`);
+        add(POINTS.multipleLeads, `${last30} leads in the last 30 days`);
       }
       if (recentVendorIds.length >= 2) {
-        score += POINTS.multipleVendors;
-        reasons.push(`Shopping on ${recentVendorIds.length} lead sources`);
+        add(POINTS.multipleVendors, `Shopping on ${recentVendorIds.length} lead sources`);
       }
     } else if (shopping.length) {
-      score += POINTS.olderLead;
-      reasons.push(`Sent a lead ${formatMonths((nowT - shopping[0].t) / DAY / MONTH_DAYS)} ago`);
+      add(POINTS.olderLead, `Sent a lead ${formatMonths((nowT - shopping[0].t) / DAY / MONTH_DAYS)} ago`);
     }
 
     // Trade-in timing. Used buyers come back sooner than new buyers; unknown
     // condition uses the new-car timing (the more conservative of the two).
     const [approaching, due] = condition === 'used' ? [12, 18] : [24, 36];
     if (monthsSince >= due) {
-      score += POINTS.timingDue;
-      reasons.push(`Bought ${vehicleText} ${formatMonths(monthsSince)} ago`);
+      add(POINTS.timingDue, `Bought ${vehicleText} ${formatMonths(monthsSince)} ago — due for a trade-in`);
     } else if (monthsSince >= approaching) {
-      score += POINTS.timingApproaching;
-      reasons.push(`Bought ${vehicleText} ${formatMonths(monthsSince)} ago`);
+      add(POINTS.timingApproaching, `Bought ${vehicleText} ${formatMonths(monthsSince)} ago — nearing trade-in time`);
     }
 
     // Loyalty only counts once the latest purchase has settled in.
     if (custSales.length >= 2 && monthsSince >= 6) {
-      score += POINTS.repeatBuyer;
-      reasons.push(`Repeat buyer (${custSales.length} purchases)`);
+      add(POINTS.repeatBuyer, `Repeat buyer (${custSales.length} purchases)`);
     }
 
     const bm = custSales.map(s => birthMonth(s.birthday)).find(m => m !== null);
     if (bm !== undefined && bm === now.getMonth() && monthsSince >= 12) {
-      score += POINTS.birthday;
-      reasons.push('Birthday this month');
+      add(POINTS.birthday, 'Birthday this month');
     }
 
+    const score = reasons.reduce((sum, r) => sum + r.points, 0);
     const tier: Tier | null = recent.length ? 'hot' : score >= WARM_MIN ? 'warm' : score >= WATCH_MIN ? 'watch' : null;
     if (!tier) continue;
 
