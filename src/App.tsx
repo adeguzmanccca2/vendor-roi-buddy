@@ -19,6 +19,7 @@ import SalesUploadPage from '@/pages/SalesUpload';
 import SalesDedupCleanupPage from '@/pages/SalesDedupCleanup';
 import ImportLogsPage from '@/pages/ImportLogs';
 import SalesPage from '@/pages/Sales';
+import LikelyToBuyPage from '@/pages/LikelyToBuy';
 import AttributionPage from '@/pages/Attribution';
 import FixAttributionPage from '@/pages/FixAttribution';
 import AttributionDryRunPage from '@/pages/AttributionDryRun';
@@ -117,6 +118,14 @@ const App = () => (
                 element={
                   <ProtectedRoute>
                     <AppLayout><ImportLogsPage /></AppLayout>
+                  </ProtectedRoute>
+                }
+              />
+              <Route
+                path="/likely-to-buy"
+                element={
+                  <ProtectedRoute>
+                    <AppLayout><LikelyToBuyPage /></AppLayout>
                   </ProtectedRoute>
                 }
               />

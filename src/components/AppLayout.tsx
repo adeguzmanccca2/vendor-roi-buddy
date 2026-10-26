@@ -1,6 +1,6 @@
 import { ReactNode } from 'react';
 import { NavLink, useLocation, useNavigate } from 'react-router-dom';
-import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, Receipt, Plug, FileBarChart, GitBranch, Car } from 'lucide-react';
+import { LayoutDashboard, Building2, Users, LogOut, Shield, Store, ListChecks, TrendingUp, Receipt, Plug, FileBarChart, GitBranch, Car, Target } from 'lucide-react';
 import { useAuth } from '@/hooks/useAuth';
 import { useActiveOrg } from '@/hooks/useActiveOrg';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/vendors', label: 'Vendors', icon: Store },
     { to: '/leads', label: 'Leads', icon: ListChecks },
     { to: '/sales', label: 'Sales', icon: Receipt },
+    { to: '/likely-to-buy', label: 'Likely to Buy', icon: Target },
     { to: '/attribution', label: 'Attribution', icon: TrendingUp },
     { to: '/source-rules', label: 'Source Rules', icon: GitBranch },
     { to: '/inventory', label: 'Inventory', icon: Car },
@@ -31,6 +32,7 @@ export default function AppLayout({ children }: { children: ReactNode }) {
     { to: '/vendors', label: 'Vendors', icon: Store },
     { to: '/leads', label: 'Leads', icon: ListChecks },
     { to: '/sales', label: 'Sales', icon: Receipt },
+    { to: '/likely-to-buy', label: 'Likely to Buy', icon: Target },
     { to: '/attribution', label: 'Attribution', icon: TrendingUp },
     { to: '/source-rules', label: 'Source Rules', icon: GitBranch },
     { to: '/inventory', label: 'Inventory', icon: Car },
