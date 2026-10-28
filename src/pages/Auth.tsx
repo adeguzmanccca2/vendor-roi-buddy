@@ -140,8 +140,26 @@ export default function AuthPage() {
   return (
     <div className="flex min-h-screen items-center justify-center bg-background p-4">
       <Card className="w-full max-w-md">
-        <CardHeader className="text-center">
-          <CardTitle className="text-2xl">Vendor ROI Tracker</CardTitle>
+        <CardHeader className="items-center text-center">
+          {/* The logo is a transparent PNG used as a mask, so it takes the
+              theme's foreground colour instead of staying black on the dark card. */}
+          <div
+            role="img"
+            aria-label="Logostek"
+            className="mb-3 h-12 w-[154px] bg-foreground"
+            style={{
+              maskImage: 'url(/logostek-logo.png)',
+              WebkitMaskImage: 'url(/logostek-logo.png)',
+              maskSize: 'contain',
+              WebkitMaskSize: 'contain',
+              maskRepeat: 'no-repeat',
+              WebkitMaskRepeat: 'no-repeat',
+              maskPosition: 'center',
+              WebkitMaskPosition: 'center',
+            }}
+          />
+          <CardTitle className="text-4xl font-extrabold tracking-tight">ROI Buddy</CardTitle>
+          <p className="text-base font-medium text-foreground/80">Vendor ROI Tracker</p>
           <p className="text-sm text-muted-foreground">Multi-dealership attribution platform</p>
         </CardHeader>
         {/* Sign-up is deliberately absent: accounts are created only by
@@ -250,6 +268,10 @@ export default function AuthPage() {
           <p className="mt-6 text-center text-xs text-muted-foreground">
             Accounts are created by invitation only. Contact your administrator
             if you need access.
+          </p>
+          <p className="mt-4 border-t pt-4 text-center text-xs text-muted-foreground">
+            ROI Buddy is owned and operated by Logostek LLC.
+            <br />© {new Date().getFullYear()} Logostek LLC. All rights reserved.
           </p>
         </CardContent>
       </Card>
